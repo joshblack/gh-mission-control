@@ -1,7 +1,7 @@
 use crate::app::{App, FlatItem, Mode, Panel};
 use crate::session::{load_turns, session_db_path, SessionStatus};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
@@ -15,6 +15,7 @@ const ACTIVE_COLOR: Color = Color::Green;
 const INACTIVE_COLOR: Color = Color::DarkGray;
 const ACCENT_COLOR: Color = Color::Cyan;
 const HEADER_COLOR: Color = Color::Magenta;
+const LOAD_MORE_COLOR: Color = Color::Yellow;
 const SELECTED_BG: Color = Color::Rgb(40, 56, 80);
 const USER_MSG_COLOR: Color = Color::Cyan;
 const AGENT_MSG_COLOR: Color = Color::White;
@@ -96,6 +97,8 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     draw_sessions_panel(f, app, cols[0]);
     draw_detail_panel(f, app, cols[1]);
 }
+
+// ── Sessions panel (left) ─────────────────────────────────────────────────────
 
 fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.active_panel == Panel::Sessions;
@@ -192,6 +195,26 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 list_idx += 1;
             }
+            FlatItem::LoadMore { hidden_count, .. } => {
+                let is_cursor = app.cursor == flat_idx;
+                let prefix = if is_cursor && is_focused { "  ❯ " } else { "    " };
+                let style = if is_cursor && is_focused {
+                    Style::default().fg(LOAD_MORE_COLOR).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(LOAD_MORE_COLOR)
+                };
+                items.push(ListItem::new(Line::from(vec![
+                    Span::raw(prefix),
+                    Span::styled(
+                        format!("… {hidden_count} more  [Enter to expand]"),
+                        style,
+                    ),
+                ])));
+                if is_cursor {
+                    list_state.select(Some(list_idx));
+                }
+                list_idx += 1;
+            }
         }
     }
 
@@ -199,7 +222,17 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, inner, &mut list_state);
 }
 
+// ── Detail panel (right) ──────────────────────────────────────────────────────
+
 fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
+    // ── Embedded terminal mode ────────────────────────────────────────────────
+    if app.mode == Mode::Terminal {
+        if let Some(ref terminal) = app.embedded_terminal {
+            draw_embedded_terminal(f, terminal, area);
+            return;
+        }
+    }
+
     let is_focused = app.active_panel == Panel::Detail;
     let border_style = if is_focused {
         Style::default().fg(ACCENT_COLOR)
@@ -214,13 +247,23 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .border_style(border_style);
         let inner = block.inner(area);
         f.render_widget(block, area);
-        let msg = Paragraph::new(Span::styled(
-            "Select a session with j/k + Enter",
-            Style::default().fg(Color::DarkGray),
-        ))
+        let msg = Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(
+                "Select a session with j/k + Enter",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(
+                "Press [o] to open a live terminal session",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]))
         .alignment(Alignment::Center);
         let cy = inner.height / 2;
-        f.render_widget(msg, Rect::new(inner.x, inner.y + cy, inner.width, 1));
+        f.render_widget(
+            msg,
+            Rect::new(inner.x, inner.y + cy.saturating_sub(1), inner.width, 3),
+        );
         return;
     };
 
@@ -238,7 +281,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(7), Constraint::Min(1)])
         .split(inner);
 
-    // ── Info card ─────────────────────────────────────────────────────────────
+    // Info card
     let (status_color, status_sym) = match session.status {
         SessionStatus::Active => (ACTIVE_COLOR, "●"),
         SessionStatus::Inactive => (INACTIVE_COLOR, "○"),
@@ -297,7 +340,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(info_card, layout[0]);
 
-    // ── Conversation turns ────────────────────────────────────────────────────
+    // Conversation turns
     let db_path = session_db_path(&app.copilot_dir);
     let turns = load_turns(&db_path, &session.id);
 
@@ -315,7 +358,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         )));
     } else {
         for turn in &turns {
-            // User message
             if let Some(ref msg) = turn.user_message {
                 turn_lines.push(Line::from(Span::styled(
                     "  You",
@@ -331,7 +373,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 turn_lines.push(Line::from(Span::raw("")));
             }
-            // Assistant response
             if let Some(ref resp) = turn.assistant_response {
                 turn_lines.push(Line::from(Span::styled(
                     "  Copilot",
@@ -340,7 +381,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 )));
                 for line in resp.lines().take(MAX_RESPONSE_LINES) {
-                    // cap long responses
                     turn_lines.push(Line::from(Span::styled(
                         format!("  {line}"),
                         Style::default().fg(AGENT_MSG_COLOR),
@@ -354,7 +394,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 turn_lines.push(Line::from(Span::raw("")));
             }
-            // Divider between turns
             turn_lines.push(Line::from(Span::styled(
                 format!("  ─── Turn {} ", turn.turn_index + 1),
                 Style::default().fg(Color::DarkGray),
@@ -371,9 +410,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let log_title = if is_focused && !turns.is_empty() {
-        " Conversation [k/j scroll, o=open in Copilot] "
-    } else if !turns.is_empty() {
-        " Conversation "
+        " Conversation [k/j scroll, o=open live] "
     } else {
         " Conversation "
     };
@@ -398,19 +435,153 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+// ── Embedded terminal renderer ────────────────────────────────────────────────
+
+fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
+    let block = Block::default()
+        .title(format!(" {} ", &term.session_id[..term.session_id.len().min(20)]))
+        .title_style(Style::default().fg(ACTIVE_COLOR).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACTIVE_COLOR));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Split into a 1-row "LIVE" banner and the vt100 render area.
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(inner);
+
+    // Banner row
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " ● LIVE ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ACTIVE_COLOR)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "   Ctrl+W: detach  ",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])),
+        layout[0],
+    );
+
+    // vt100 screen
+    let vt100_area = layout[1];
+    render_vt100_screen(f, term, vt100_area);
+}
+
+fn render_vt100_screen(
+    f: &mut Frame,
+    term: &crate::terminal::EmbeddedTerminal,
+    area: Rect,
+) {
+    let parser = term.parser.lock().unwrap();
+    let screen = parser.screen();
+
+    let rows = area.height as usize;
+    let cols = area.width as usize;
+
+    let mut lines: Vec<Line> = Vec::with_capacity(rows);
+
+    for row in 0..rows {
+        let mut spans: Vec<Span> = Vec::new();
+        let mut cur_style = Style::default();
+        let mut cur_text = String::new();
+
+        for col in 0..cols {
+            let (ch, style) = match screen.cell(row as u16, col as u16) {
+                Some(cell) => {
+                    let c = cell.contents();
+                let ch = if c.is_empty() { " ".to_string() } else { c.to_string() };
+                    (ch, cell_to_ratatui_style(cell))
+                }
+                None => (" ".to_string(), Style::default()),
+            };
+
+            if style == cur_style {
+                cur_text.push_str(&ch);
+            } else {
+                if !cur_text.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut cur_text), cur_style));
+                }
+                cur_text = ch.to_string();
+                cur_style = style;
+            }
+        }
+        if !cur_text.is_empty() {
+            spans.push(Span::styled(cur_text, cur_style));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    // Render the screen content.
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
+
+    // Position the cursor.
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    if !screen.hide_cursor()
+        && cursor_col < area.width
+        && cursor_row < area.height
+    {
+        f.set_cursor_position(Position {
+            x: area.x + cursor_col,
+            y: area.y + cursor_row,
+        });
+    }
+}
+
+fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
+    let fg = vt100_color_to_ratatui(cell.fgcolor());
+    let bg = vt100_color_to_ratatui(cell.bgcolor());
+    let mut style = Style::default().fg(fg).bg(bg);
+    if cell.bold() {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.italic() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if cell.underline() {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    if cell.inverse() {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    style
+}
+
+fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(n) => Color::Indexed(n),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+// ── Footer ────────────────────────────────────────────────────────────────────
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
             " [Enter] Launch  [Esc] Cancel ",
             Style::default().fg(Color::Yellow),
         ),
+        Mode::Terminal => (
+            " [Ctrl+W] Detach from session  (all other keys forwarded to Copilot) ",
+            Style::default().fg(ACTIVE_COLOR),
+        ),
         Mode::Normal => {
             let t = match app.active_panel {
                 Panel::Sessions => {
-                    " [j/k] Navigate  [Enter/Space] View  [o] Open in Copilot  [n] New Session  [r] Reload  [q] Quit "
+                    " [j/k] Navigate  [Enter] View/Expand  [o] Open live  [n] New  [r] Reload  [q] Quit "
                 }
                 Panel::Detail => {
-                    " [j/k] Scroll  [o] Open in Copilot  [Esc/h] Back  [n] New Session  [q] Quit "
+                    " [j/k] Scroll  [o] Open live  [Esc/h] Back  [n] New  [q] Quit "
                 }
             };
             (t, Style::default().fg(Color::Gray))
@@ -427,6 +598,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         inner,
     );
 }
+
+// ── Overlays ──────────────────────────────────────────────────────────────────
 
 fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
     let popup = centered_rect(70, 5, area);
@@ -470,6 +643,8 @@ fn draw_status_toast(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let w = area.width * percent_x / 100;
     let x = (area.width - w) / 2 + area.x;
@@ -486,4 +661,3 @@ fn short_path(path: &str) -> String {
     }
     path.to_string()
 }
-
