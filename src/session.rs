@@ -213,7 +213,8 @@ pub fn copilot_binary() -> Option<PathBuf> {
 
 fn which_in_path(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var("PATH").unwrap_or_default();
-    for dir in path_var.split(':') {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    for dir in path_var.split(separator) {
         let candidate = PathBuf::from(dir).join(name);
         if candidate.exists() {
             return Some(candidate);
@@ -243,7 +244,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
     let git_root = map.get("git_root").map(|s| PathBuf::from(s));
     let repository = map.get("repository").map(|s| s.to_string());
     let branch = map.get("branch").map(|s| s.to_string());
-    let user_named = map.get("user_named").map(|s| *s == "true").unwrap_or(false);
+    let user_named = matches!(map.get("user_named"), Some(&"true"));
     let created_at = map
         .get("created_at")
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
