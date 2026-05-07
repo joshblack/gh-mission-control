@@ -175,18 +175,16 @@ impl App {
         let dir = if raw.is_empty() {
             self.launch_dir.clone()
         } else {
-            // Expand ~ if present
-            let expanded = if raw.starts_with('~') {
-                if let Some(home) = dirs::home_dir() {
-                    home.join(raw.trim_start_matches("~/"))
-                        .join(raw.trim_start_matches("~"))
-                } else {
-                    PathBuf::from(&raw)
-                }
+            // Expand ~ to home directory
+            if let Some(rest) = raw.strip_prefix("~/") {
+                dirs::home_dir()
+                    .map(|h| h.join(rest))
+                    .unwrap_or_else(|| PathBuf::from(&raw))
+            } else if raw == "~" {
+                dirs::home_dir().unwrap_or_else(|| PathBuf::from(&raw))
             } else {
                 PathBuf::from(&raw)
-            };
-            expanded
+            }
         };
         self.input_buffer.clear();
         self.mode = Mode::Normal;

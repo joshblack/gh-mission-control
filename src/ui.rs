@@ -18,6 +18,8 @@ const HEADER_COLOR: Color = Color::Magenta;
 const SELECTED_BG: Color = Color::Rgb(40, 56, 80);
 const USER_MSG_COLOR: Color = Color::Cyan;
 const AGENT_MSG_COLOR: Color = Color::White;
+/// Maximum lines shown per assistant response before truncating.
+const MAX_RESPONSE_LINES: usize = 20;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -337,14 +339,14 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(AGENT_MSG_COLOR)
                         .add_modifier(Modifier::BOLD),
                 )));
-                for line in resp.lines().take(20) {
+                for line in resp.lines().take(MAX_RESPONSE_LINES) {
                     // cap long responses
                     turn_lines.push(Line::from(Span::styled(
                         format!("  {line}"),
                         Style::default().fg(AGENT_MSG_COLOR),
                     )));
                 }
-                if resp.lines().count() > 20 {
+                if resp.lines().count() > MAX_RESPONSE_LINES {
                     turn_lines.push(Line::from(Span::styled(
                         "  … (truncated)",
                         Style::default().fg(Color::DarkGray),
@@ -354,7 +356,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             }
             // Divider between turns
             turn_lines.push(Line::from(Span::styled(
-                format!("  ─── Turn {} ───────────────────", turn.turn_index + 1),
+                format!("  ─── Turn {} ", turn.turn_index + 1),
                 Style::default().fg(Color::DarkGray),
             )));
             turn_lines.push(Line::from(Span::raw("")));
