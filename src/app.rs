@@ -77,6 +77,8 @@ pub struct App {
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub pending_action: PendingAction,
+    /// Session ids present before launching a new Copilot session.
+    pub new_session_reload_baseline: Option<HashSet<String>>,
     /// Groups whose "Load more" item has been expanded.
     pub expanded_groups: HashSet<String>,
     /// Groups that are collapsed down to only their directory header.
@@ -129,6 +131,7 @@ impl App {
             should_quit: false,
             status_message: None,
             pending_action: PendingAction::None,
+            new_session_reload_baseline: None,
             expanded_groups,
             collapsed_groups,
             focused_group,
@@ -152,6 +155,37 @@ impl App {
         }
         self.update_selected_from_cursor();
         self.detail_scroll = 0;
+    }
+
+    pub fn watch_for_new_session(&mut self) {
+        self.new_session_reload_baseline = Some(
+            self.sessions
+                .iter()
+                .map(|session| session.id.clone())
+                .collect(),
+        );
+    }
+
+    pub fn clear_new_session_reload_watch(&mut self) {
+        self.new_session_reload_baseline = None;
+    }
+
+    pub fn reload_if_new_session_created(&mut self) -> bool {
+        let Some(baseline) = self.new_session_reload_baseline.as_ref() else {
+            return false;
+        };
+
+        let sessions = load_sessions(&self.copilot_dir);
+        if !sessions
+            .iter()
+            .any(|session| !baseline.contains(&session.id))
+        {
+            return false;
+        }
+
+        self.new_session_reload_baseline = None;
+        self.reload();
+        true
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────

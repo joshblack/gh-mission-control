@@ -127,8 +127,7 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
         if let Ok(content) = fs::read_to_string(&workspace) {
             if let Some(mut session) = parse_workspace_yaml(&content) {
                 // Try to enrich with summary from SQLite
-                session.summary = load_summary_from_db(&db_path, &session.id)
-                    .or(session.summary);
+                session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
                 // Detect if active
                 session.status = if is_session_active(&session.id) {
                     SessionStatus::Active

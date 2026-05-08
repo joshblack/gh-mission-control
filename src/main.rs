@@ -89,6 +89,7 @@ where
                             cols,
                         ) {
                             Ok(term) => {
+                                app.watch_for_new_session();
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
@@ -150,8 +151,13 @@ where
             app.embedded_terminal = None;
             app.mode = Mode::Normal;
             app.terminal_fullscreen = false;
+            app.clear_new_session_reload_watch();
             app.reload();
             app.status_message = Some("Session ended".into());
+            status_since = Some(Instant::now());
+        }
+        if app.reload_if_new_session_created() {
+            app.status_message = Some("New session loaded".into());
             status_since = Some(Instant::now());
         }
 
