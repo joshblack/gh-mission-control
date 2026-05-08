@@ -54,7 +54,7 @@ pub struct CopilotSession {
 
 impl CopilotSession {
     /// Display name for this session.
-    /// Priority: user summary → branch → last cwd component → id prefix.
+    /// Priority: workspace title/summary → branch → last cwd component → id prefix.
     pub fn display_name(&self) -> String {
         if let Some(ref s) = self.summary {
             let first = s.lines().next().unwrap_or("").trim();
@@ -137,8 +137,10 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
                 if session.updated_at < oldest_active {
                     continue;
                 }
-                // Try to enrich with summary from SQLite
-                session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
+                // Try to enrich with summary from SQLite when workspace.yaml has no title/summary.
+                if session.summary.is_none() {
+                    session.summary = load_summary_from_db(&db_path, &session.id);
+                }
                 session.last_agent_message = load_last_agent_message_from_db(&db_path, &session.id);
                 session.status = detect_session_status(&db_path, &session.id);
                 sessions.push(session);
@@ -262,7 +264,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or(created_at);
 
-    // Use any title/summary fields present in workspace.yaml, then enrich from the DB.
+    // Use the title/summary fields present in workspace.yaml before DB summaries.
     let summary = map
         .get("title")
         .or_else(|| map.get("summary"))
@@ -386,5 +388,56 @@ fn is_session_active(session_id: &str) -> bool {
     {
         let _ = session_id;
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn load_sessions_prefers_workspace_title_over_db_summary() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ghmc-session-test-{unique}"));
+        let session_id = "12345678-1234-1234-1234-123456789abc";
+        let session_dir = root.join("session-state").join(session_id);
+        fs::create_dir_all(&session_dir).unwrap();
+
+        let timestamp = Utc::now().to_rfc3339();
+        fs::write(
+            session_dir.join("workspace.yaml"),
+            format!(
+                "id: {session_id}\n\
+                 cwd: /tmp/example\n\
+                 branch: feature\n\
+                 title: Workspace Title\n\
+                 summary: Workspace Summary\n\
+                 created_at: {timestamp}\n\
+                 updated_at: {timestamp}\n"
+            ),
+        )
+        .unwrap();
+
+        let conn = rusqlite::Connection::open(root.join("session-store.db")).unwrap();
+        conn.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, summary TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, summary) VALUES (?1, ?2)",
+            (session_id, "Database Summary"),
+        )
+        .unwrap();
+
+        let sessions = load_sessions(&root);
+
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].display_name(), "Workspace Title");
     }
 }

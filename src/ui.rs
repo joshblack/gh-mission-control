@@ -23,8 +23,6 @@ const SURFACE_COLOR: Color = Color::Rgb(0x24, 0x28, 0x3b);
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const MUTED_COLOR: Color = IDLE_COLOR;
 const LOAD_MORE_COLOR: Color = WAITING_COLOR;
-const SELECTED_BG: Color = ACCENT_COLOR;
-const SELECTED_FG: Color = BACKGROUND_COLOR;
 const USER_MSG_COLOR: Color = ACCENT_COLOR;
 const AGENT_MSG_COLOR: Color = TEXT_COLOR;
 /// Maximum lines shown per assistant response before truncating.
@@ -140,20 +138,17 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let label = short_path(path);
                 let is_cursor = app.cursor == flat_idx;
                 let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused { "❯ " } else { "" };
-                let focus_suffix = if is_focused_group { "  focused" } else { "" };
-                let style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(SELECTED_FG)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD)
+                let prefix = if is_cursor && is_focused {
+                    "▌ "
                 } else {
-                    Style::default()
-                        .fg(GROUP_COLOR)
-                        .add_modifier(Modifier::BOLD)
+                    "  "
                 };
+                let focus_suffix = if is_focused_group { "  focused" } else { "" };
+                let style = Style::default()
+                    .fg(GROUP_COLOR)
+                    .add_modifier(Modifier::BOLD);
                 items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
+                    active_prefix(prefix, is_cursor && is_focused),
                     Span::styled(label, style),
                     Span::styled(focus_suffix, Style::default().fg(MUTED_COLOR)),
                 ])));
@@ -167,25 +162,32 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let is_cursor = app.cursor == flat_idx;
                 let is_selected = app.selected_session == Some(*idx);
 
-                let name_style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(SELECTED_FG)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
+                let name_style = if (is_cursor && is_focused) || is_selected {
                     Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(TEXT_COLOR)
                 };
 
                 let prefix = if is_cursor && is_focused {
-                    "❯ "
+                    "▌ "
                 } else {
                     "  "
                 };
                 items.push(ListItem::new(Text::from(vec![
-                    session_title_line(session, inner.width as usize, prefix, name_style, now),
-                    session_description_line(session, inner.width as usize, prefix.len()),
+                    session_title_line(
+                        session,
+                        inner.width as usize,
+                        prefix,
+                        is_cursor && is_focused,
+                        name_style,
+                        now,
+                    ),
+                    session_description_line(
+                        session,
+                        inner.width as usize,
+                        prefix,
+                        is_cursor && is_focused,
+                    ),
                 ])));
 
                 if is_cursor {
@@ -196,7 +198,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             FlatItem::LoadMore { hidden_count, .. } => {
                 let is_cursor = app.cursor == flat_idx;
                 let prefix = if is_cursor && is_focused {
-                    "❯ "
+                    "▌ "
                 } else {
                     "  "
                 };
@@ -208,7 +210,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(LOAD_MORE_COLOR)
                 };
                 items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
+                    active_prefix(prefix, is_cursor && is_focused),
                     Span::styled(format!("… {hidden_count} more  [Enter to expand]"), style),
                 ])));
                 if is_cursor {
@@ -221,14 +223,28 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let list = List::new(items)
         .style(Style::default().bg(SURFACE_COLOR))
-        .highlight_style(Style::default().fg(SELECTED_FG).bg(SELECTED_BG));
+        .highlight_style(Style::default());
     f.render_stateful_widget(list, inner, &mut list_state);
+}
+
+fn active_prefix(prefix: &str, is_active: bool) -> Span<'static> {
+    if is_active {
+        Span::styled(
+            prefix.to_string(),
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw(prefix.to_string())
+    }
 }
 
 fn session_title_line(
     session: &CopilotSession,
     width: usize,
     prefix: &str,
+    is_active: bool,
     name_style: Style,
     now: DateTime<Utc>,
 ) -> Line<'static> {
@@ -240,7 +256,7 @@ fn session_title_line(
     let spacer = " ".repeat(width.saturating_sub(used_width).max(1));
 
     Line::from(vec![
-        Span::raw(prefix.to_string()),
+        active_prefix(prefix, is_active),
         Span::styled(title, name_style),
         Span::raw(spacer),
         Span::styled(time, Style::default().fg(MUTED_COLOR)),
@@ -250,19 +266,20 @@ fn session_title_line(
 fn session_description_line(
     session: &CopilotSession,
     width: usize,
-    title_prefix_width: usize,
+    prefix: &str,
+    is_active: bool,
 ) -> Line<'static> {
-    let prefix = " ".repeat(title_prefix_width);
     let message = session
         .last_agent_message
         .as_deref()
         .map(single_line)
         .filter(|message| !message.is_empty())
         .unwrap_or_else(|| "No agent response yet.".to_string());
-    let description = truncate_ellipsis(&message, width.saturating_sub(title_prefix_width).max(1));
+    let prefix_width = prefix.chars().count();
+    let description = truncate_ellipsis(&message, width.saturating_sub(prefix_width).max(1));
 
     Line::from(vec![
-        Span::raw(prefix),
+        active_prefix(prefix, is_active),
         Span::styled(description, Style::default().fg(MUTED_COLOR)),
     ])
 }
