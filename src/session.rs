@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 // ── Status ──────────────────────────────────────────────────────────────────
 
@@ -338,6 +339,10 @@ fn response_indicates_error(response: &str) -> bool {
 /// Check if a copilot session is currently active by scanning running processes.
 /// On Linux this reads /proc/*/cmdline; returns false on other platforms.
 fn is_session_active(session_id: &str) -> bool {
+    if tmux_has_session(session_id) {
+        return true;
+    }
+
     #[cfg(target_os = "linux")]
     {
         let proc = match fs::read_dir("/proc") {
@@ -361,4 +366,31 @@ fn is_session_active(session_id: &str) -> bool {
         let _ = session_id;
         false
     }
+}
+
+fn tmux_has_session(session_id: &str) -> bool {
+    Command::new("tmux")
+        .arg("has-session")
+        .arg("-t")
+        .arg(tmux_session_name(session_id))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn tmux_session_name(session_id: &str) -> String {
+    let sanitized: String = session_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect();
+    format!("ghmc_{sanitized}")
 }

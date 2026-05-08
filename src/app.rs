@@ -222,6 +222,19 @@ impl App {
         self.update_selected_from_cursor();
     }
 
+    pub fn move_page_up(&mut self) {
+        self.cursor = self.cursor.saturating_sub(DETAIL_PAGE_SCROLL_AMOUNT);
+        self.update_selected_from_cursor();
+    }
+
+    pub fn move_page_down(&mut self) {
+        if self.flat_list.is_empty() {
+            return;
+        }
+        self.cursor = (self.cursor + DETAIL_PAGE_SCROLL_AMOUNT).min(self.flat_list.len() - 1);
+        self.update_selected_from_cursor();
+    }
+
     /// Select / activate the item currently under the cursor.
     pub fn select_current(&mut self) {
         match self.flat_list.get(self.cursor).cloned() {
@@ -467,7 +480,8 @@ fn build_flat_list(
             continue;
         }
 
-        let is_expanded = expanded.contains(&key);
+        let is_focused = focused == Some(key.as_str());
+        let is_expanded = is_focused || expanded.contains(&key);
         let total = indices.len();
         let visible = if is_expanded {
             total
