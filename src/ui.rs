@@ -1,6 +1,6 @@
 use crate::app::{App, FlatItem, Mode, Panel};
 use crate::session::{load_turns, session_db_path, CopilotSession, SessionStatus};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -120,6 +120,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut list_state = ListState::default();
     let mut list_idx = 0usize;
+    let now = Utc::now();
 
     for (flat_idx, item) in app.flat_list.iter().enumerate() {
         match item {
@@ -173,7 +174,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     "  "
                 };
                 items.push(ListItem::new(Text::from(vec![
-                    session_title_line(session, inner.width as usize, prefix, name_style),
+                    session_title_line(session, inner.width as usize, prefix, name_style, now),
                     session_description_line(session, inner.width as usize, prefix.len()),
                 ])));
 
@@ -217,8 +218,9 @@ fn session_title_line(
     width: usize,
     prefix: &str,
     name_style: Style,
+    now: DateTime<Utc>,
 ) -> Line<'static> {
-    let time = relative_minutes(session);
+    let time = relative_minutes(session, now);
     let fixed_width = prefix.chars().count() + time.chars().count() + 1;
     let title_width = width.saturating_sub(fixed_width).max(1);
     let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
@@ -253,8 +255,8 @@ fn session_description_line(
     ])
 }
 
-fn relative_minutes(session: &CopilotSession) -> String {
-    let minutes = (Utc::now() - session.updated_at).num_minutes().max(0);
+fn relative_minutes(session: &CopilotSession, now: DateTime<Utc>) -> String {
+    let minutes = (now - session.updated_at).num_minutes().max(0);
     format!("{minutes}m")
 }
 
@@ -263,12 +265,15 @@ fn single_line(value: &str) -> String {
 }
 
 fn truncate_ellipsis(value: &str, max_width: usize) -> String {
-    let mut chars = value.chars();
-    let mut truncated: String = chars.by_ref().take(max_width).collect();
-    if chars.next().is_some() && max_width > 0 {
-        truncated.pop();
-        truncated.push('…');
+    if value.chars().count() <= max_width {
+        return value.to_string();
     }
+    if max_width <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated: String = value.chars().take(max_width - 1).collect();
+    truncated.push('…');
     truncated
 }
 

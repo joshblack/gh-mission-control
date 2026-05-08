@@ -262,7 +262,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or(created_at);
 
-    // summary_count can guide us but the actual summary usually comes from the DB
+    // Use any title/summary fields present in workspace.yaml, then enrich from the DB.
     let summary = map
         .get("title")
         .or_else(|| map.get("summary"))
