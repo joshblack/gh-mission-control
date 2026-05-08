@@ -136,8 +136,12 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
             if let Some(mut session) = parse_workspace_yaml(&content) {
                 // Try to enrich with summary from SQLite
                 session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
-                session.status =
-                    detect_session_status(&db_path, &session.id, &active_tmux_sessions);
+                session.status = detect_session_status(
+                    copilot_dir,
+                    &db_path,
+                    &session.id,
+                    &active_tmux_sessions,
+                );
                 sessions.push(session);
             }
         }
@@ -154,7 +158,8 @@ pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSessi
     let active_tmux_sessions = active_tmux_session_names();
 
     for session in sessions {
-        session.status = detect_session_status(&db_path, &session.id, &active_tmux_sessions);
+        session.status =
+            detect_session_status(copilot_dir, &db_path, &session.id, &active_tmux_sessions);
     }
 }
 
@@ -300,12 +305,19 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
 }
 
 fn detect_session_status(
+    copilot_dir: &Path,
     db_path: &Path,
     session_id: &str,
     active_tmux_sessions: &HashSet<String>,
 ) -> SessionStatus {
     if !active_tmux_sessions.contains(&tmux_session_name(session_id)) {
         return SessionStatus::Idle;
+    }
+
+    if let Some(status) =
+        detect_session_status_from_events(&event_log_path(copilot_dir, session_id))
+    {
+        return status;
     }
 
     match load_latest_turn_from_db(db_path, session_id) {
@@ -317,6 +329,90 @@ fn detect_session_status(
         }
         _ => SessionStatus::Waiting,
     }
+}
+
+fn event_log_path(copilot_dir: &Path, session_id: &str) -> PathBuf {
+    session_state_dir(copilot_dir)
+        .join(session_id)
+        .join("events.jsonl")
+}
+
+fn detect_session_status_from_events(path: &Path) -> Option<SessionStatus> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| detect_session_status_from_event_content(&content))
+}
+
+fn detect_session_status_from_event_content(content: &str) -> Option<SessionStatus> {
+    let mut saw_event = false;
+    let mut active_turn: Option<String> = None;
+    let mut pending_permissions = HashSet::new();
+    let mut saw_error = false;
+
+    for line in content.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(event_type) = event.get("type").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        saw_event = true;
+
+        let data = event.get("data").unwrap_or(&serde_json::Value::Null);
+        match event_type {
+            "assistant.turn_start" => {
+                active_turn = data
+                    .get("turnId")
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string);
+                pending_permissions.clear();
+                saw_error = false;
+            }
+            "assistant.turn_end" => {
+                if active_turn.as_deref() == data.get("turnId").and_then(|value| value.as_str()) {
+                    active_turn = None;
+                    pending_permissions.clear();
+                }
+            }
+            "permission.requested" => {
+                if let Some(request_id) = data.get("requestId").and_then(|value| value.as_str()) {
+                    pending_permissions.insert(request_id.to_string());
+                }
+            }
+            "permission.completed" => {
+                if let Some(request_id) = data.get("requestId").and_then(|value| value.as_str()) {
+                    pending_permissions.remove(request_id);
+                }
+            }
+            "tool.execution_complete" => {
+                if data
+                    .get("success")
+                    .and_then(|value| value.as_bool())
+                    .is_some_and(|success| !success)
+                {
+                    saw_error = true;
+                }
+            }
+            _ if event_type.ends_with(".error") => {
+                saw_error = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !saw_event {
+        return None;
+    }
+    if saw_error {
+        return Some(SessionStatus::Error);
+    }
+    if !pending_permissions.is_empty() {
+        return Some(SessionStatus::Waiting);
+    }
+    if active_turn.is_some() {
+        return Some(SessionStatus::Running);
+    }
+    Some(SessionStatus::Waiting)
 }
 
 fn load_latest_turn_from_db(
@@ -374,4 +470,53 @@ fn active_tmux_session_names() -> HashSet<String> {
         .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
         .map(ToString::to_string)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_status_reports_running_for_active_turn() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Running)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_waiting_for_pending_permission() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"permission.requested","data":{"requestId":"approve-1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Waiting)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_running_after_permission_completes() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"permission.requested","data":{"requestId":"approve-1"}}
+{"type":"permission.completed","data":{"requestId":"approve-1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Running)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_waiting_after_turn_end() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"assistant.turn_end","data":{"turnId":"1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Waiting)
+        );
+    }
 }

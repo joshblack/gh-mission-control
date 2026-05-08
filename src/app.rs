@@ -85,6 +85,7 @@ pub struct App {
     pub expanded_groups: HashSet<String>,
     /// Groups that are collapsed down to only their directory header.
     pub collapsed_groups: HashSet<String>,
+    notified_waiting_sessions: HashSet<String>,
     /// When set, only sessions in this directory group are shown.
     pub focused_group: Option<String>,
     /// A live copilot session embedded in the right panel, if any.
@@ -136,6 +137,7 @@ impl App {
             new_session_reload_baseline: None,
             expanded_groups,
             collapsed_groups,
+            notified_waiting_sessions: HashSet::new(),
             focused_group,
             embedded_terminal: None,
             terminal_fullscreen: false,
@@ -146,8 +148,9 @@ impl App {
         self.replace_sessions(load_sessions(&self.copilot_dir));
     }
 
-    pub fn refresh_statuses(&mut self) {
+    pub fn refresh_statuses(&mut self) -> bool {
         refresh_session_statuses(&self.copilot_dir, &mut self.sessions);
+        self.take_waiting_notification()
     }
 
     pub fn status_poll_interval(&self) -> std::time::Duration {
@@ -164,6 +167,8 @@ impl App {
 
     fn replace_sessions(&mut self, sessions: Vec<CopilotSession>) {
         self.sessions = sessions;
+        self.notified_waiting_sessions
+            .retain(|id| self.sessions.iter().any(|session| &session.id == id));
         self.clear_missing_focused_group();
         self.flat_list = build_flat_list(
             &self.sessions,
@@ -400,6 +405,21 @@ impl App {
             .map(PathBuf::from)
             .or_else(|| self.current_group_key().map(PathBuf::from))
             .unwrap_or_else(|| self.launch_dir.clone())
+    }
+
+    fn take_waiting_notification(&mut self) -> bool {
+        let waiting_sessions: HashSet<String> = self
+            .sessions
+            .iter()
+            .filter(|session| session.status == SessionStatus::Waiting)
+            .map(|session| session.id.clone())
+            .collect();
+        let should_notify = waiting_sessions
+            .iter()
+            .any(|id| !self.notified_waiting_sessions.contains(id));
+
+        self.notified_waiting_sessions = waiting_sessions;
+        should_notify
     }
 
     fn rebuild_flat_list_keep_cursor(&mut self) {
