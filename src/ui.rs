@@ -21,6 +21,7 @@ const LOAD_MORE_COLOR: Color = Color::Yellow;
 const SELECTED_BG: Color = Color::Rgb(40, 56, 80);
 const USER_MSG_COLOR: Color = Color::Cyan;
 const AGENT_MSG_COLOR: Color = Color::White;
+const MARKDOWN_TEXT_COLOR: Color = Color::White;
 const MARKDOWN_HEADING_COLOR: Color = Color::Magenta;
 const MARKDOWN_MARKER_COLOR: Color = Color::Yellow;
 const MARKDOWN_CODE_COLOR: Color = Color::Green;
@@ -379,7 +380,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(USER_MSG_COLOR)
                         .add_modifier(Modifier::BOLD),
                 )));
-                push_markdown_lines(&mut turn_lines, msg, AGENT_MSG_COLOR, None);
+                push_markdown_lines(&mut turn_lines, msg, MARKDOWN_TEXT_COLOR, None);
                 turn_lines.push(Line::from(Span::raw("")));
             }
             if let Some(ref resp) = turn.assistant_response {
@@ -392,7 +393,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 if push_markdown_lines(
                     &mut turn_lines,
                     resp,
-                    AGENT_MSG_COLOR,
+                    MARKDOWN_TEXT_COLOR,
                     Some(MAX_RESPONSE_LINES),
                 ) {
                     turn_lines.push(Line::from(Span::styled(
@@ -581,7 +582,7 @@ fn append_emphasis_markdown(spans: &mut Vec<Span<'static>>, text: &str, base_col
         if token_len == 1 || token_len == 3 {
             style = style.add_modifier(Modifier::ITALIC);
         }
-        spans.push(Span::styled(format!("{marker}{content}{marker}"), style));
+        spans.push(Span::styled(content.to_string(), style));
         rest = &after_content[token_len..];
     }
 
@@ -593,7 +594,8 @@ fn append_emphasis_markdown(spans: &mut Vec<Span<'static>>, text: &str, base_col
 fn find_emphasis(text: &str) -> Option<(usize, &'static str, usize)> {
     const EMPHASIS_MARKERS: [&str; 6] = ["***", "___", "**", "__", "*", "_"];
 
-    for (index, _) in text.char_indices() {
+    let mut index = 0;
+    while index < text.len() {
         let rest = &text[index..];
         for marker in EMPHASIS_MARKERS {
             if !rest.starts_with(marker) {
@@ -606,6 +608,7 @@ fn find_emphasis(text: &str) -> Option<(usize, &'static str, usize)> {
                 }
             }
         }
+        index += rest.chars().next().map_or(1, char::len_utf8);
     }
 
     None
