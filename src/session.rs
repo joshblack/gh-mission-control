@@ -35,6 +35,7 @@ pub struct CopilotSession {
     #[allow(dead_code)]
     pub git_root: Option<PathBuf>,
     /// GitHub repository (e.g., "owner/repo")
+    #[allow(dead_code)]
     pub repository: Option<String>,
     /// Current git branch
     pub branch: Option<String>,
@@ -291,8 +292,8 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
         |row| row.get::<_, Option<String>>(0),
     )
     .ok()
-        .flatten()
-        .filter(|s| !s.is_empty())
+    .flatten()
+    .filter(|s| !s.is_empty())
 }
 
 fn load_last_agent_message_from_db(db_path: &Path, session_id: &str) -> Option<String> {

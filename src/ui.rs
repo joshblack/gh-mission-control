@@ -127,11 +127,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let label = short_path(path);
                 let is_cursor = app.cursor == flat_idx;
                 let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused {
-                    "❯ "
-                } else {
-                    ""
-                };
+                let prefix = if is_cursor && is_focused { "❯ " } else { "" };
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
                 let style = if is_cursor && is_focused {
                     Style::default()
@@ -171,7 +167,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(Color::White)
                 };
 
-                let prefix = if is_cursor && is_focused { "❯ " } else { "  " };
+                let prefix = if is_cursor && is_focused {
+                    "❯ "
+                } else {
+                    "  "
+                };
                 items.push(ListItem::new(Text::from(vec![
                     session_title_line(session, inner.width as usize, prefix, name_style),
                     session_description_line(session, inner.width as usize, prefix.len()),
@@ -245,10 +245,7 @@ fn session_description_line(
         .map(single_line)
         .filter(|message| !message.is_empty())
         .unwrap_or_else(|| "No agent response yet.".to_string());
-    let description = truncate_ellipsis(
-        &message,
-        width.saturating_sub(title_prefix_width).max(1),
-    );
+    let description = truncate_ellipsis(&message, width.saturating_sub(title_prefix_width).max(1));
 
     Line::from(vec![
         Span::raw(prefix),
@@ -321,7 +318,9 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let session = &app.sessions[idx];
-    let block = Block::default().borders(Borders::ALL).border_style(border_style);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
