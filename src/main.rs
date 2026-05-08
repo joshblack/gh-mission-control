@@ -166,11 +166,15 @@ where
         if should_check_for_new_session {
             last_new_session_reload_check = Some(Instant::now());
             if let Some(new_session_id) = app.reload_if_new_session_created() {
-                if let Some(term) = app.embedded_terminal.as_mut() {
-                    term.reuse_as_session(&new_session_id);
-                }
+                let reuse_error = app
+                    .embedded_terminal
+                    .as_mut()
+                    .and_then(|term| term.reuse_as_session(&new_session_id).err());
                 last_new_session_reload_check = None;
-                app.status_message = Some("New session loaded".into());
+                app.status_message = Some(match reuse_error {
+                    Some(e) => format!("New session loaded; tmux reuse failed: {e}"),
+                    None => "New session loaded".into(),
+                });
                 status_since = Some(Instant::now());
             }
         }

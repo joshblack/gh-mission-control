@@ -27,7 +27,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Terminal && app.terminal_fullscreen {
         if let Some(ref terminal) = app.embedded_terminal {
-            draw_embedded_terminal(f, terminal, area, true);
+            draw_embedded_terminal(f, terminal, area);
         }
         if app.status_message.is_some() {
             draw_status_toast(f, app, area);
@@ -235,7 +235,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     // ── Embedded terminal mode ────────────────────────────────────────────────
     if app.mode == Mode::Terminal {
         if let Some(ref terminal) = app.embedded_terminal {
-            draw_embedded_terminal(f, terminal, area, false);
+            draw_embedded_terminal(f, terminal, area);
             return;
         }
     }
@@ -450,12 +450,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ── Embedded terminal renderer ────────────────────────────────────────────────
 
-fn draw_embedded_terminal(
-    f: &mut Frame,
-    term: &crate::terminal::EmbeddedTerminal,
-    area: Rect,
-    _fullscreen: bool,
-) {
+fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACTIVE_COLOR));

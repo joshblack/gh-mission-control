@@ -157,26 +157,37 @@ impl EmbeddedTerminal {
     }
 
     /// Rename the backing tmux session to the deterministic name for `session_id`.
-    pub fn reuse_as_session(&mut self, session_id: &str) {
+    ///
+    /// This is used after a newly launched Copilot process writes its real
+    /// session state. If the terminal is already using that deterministic tmux
+    /// name, only the stored session id is updated. If another tmux session is
+    /// already using the target name, this leaves the current tmux session
+    /// unchanged rather than replacing an existing active session.
+    pub fn reuse_as_session(&mut self, session_id: &str) -> anyhow::Result<()> {
         let target = tmux_session_name(session_id);
         if self.tmux_session == target {
             self.session_id = session_id.to_string();
-            return;
+            return Ok(());
         }
 
         if !tmux_has_session(&target) {
-            let _ = Command::new("tmux")
+            let status = Command::new("tmux")
                 .arg("rename-session")
                 .arg("-t")
                 .arg(&self.tmux_session)
                 .arg(&target)
-                .status();
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("tmux rename-session exited with {status}");
+            }
         }
 
         if tmux_has_session(&target) {
             self.tmux_session = target;
             self.session_id = session_id.to_string();
         }
+
+        Ok(())
     }
 }
 
