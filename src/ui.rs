@@ -186,6 +186,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(prefix),
                     Span::styled(status_sym, Style::default().fg(status_color)),
+                    Span::raw(" "),
                     Span::styled(name, name_style),
                     Span::styled(
                         format!("  {time_str}"),
@@ -458,7 +459,7 @@ fn status_display(status: &SessionStatus) -> (Color, &'static str) {
 fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(ACTIVE_COLOR));
+        .border_style(Style::default().fg(RUNNING_COLOR));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -561,7 +562,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ),
         Mode::Terminal => (
             "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot",
-            Style::default().fg(ACTIVE_COLOR),
+            Style::default().fg(RUNNING_COLOR),
         ),
         Mode::Normal => {
             let t = match app.active_panel {
@@ -622,7 +623,7 @@ fn draw_status_toast(f: &mut Frame, app: &App, area: Rect) {
                 format!("  {msg}  "),
                 Style::default()
                     .fg(Color::Black)
-                    .bg(ACTIVE_COLOR)
+                    .bg(RUNNING_COLOR)
                     .add_modifier(Modifier::BOLD),
             )),
             toast,
