@@ -77,7 +77,7 @@ pub struct App {
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub pending_action: PendingAction,
-    /// Session ids present before launching a new Copilot session.
+    /// Session IDs present before launching a new Copilot session.
     pub new_session_reload_baseline: Option<HashSet<String>>,
     /// Groups whose "Load more" item has been expanded.
     pub expanded_groups: HashSet<String>,
@@ -157,7 +157,7 @@ impl App {
         self.detail_scroll = 0;
     }
 
-    pub fn watch_for_new_session(&mut self) {
+    pub fn capture_new_session_reload_baseline(&mut self) {
         self.new_session_reload_baseline = Some(
             self.sessions
                 .iter()
@@ -168,6 +168,10 @@ impl App {
 
     pub fn clear_new_session_reload_watch(&mut self) {
         self.new_session_reload_baseline = None;
+    }
+
+    pub fn has_new_session_reload_watch(&self) -> bool {
+        self.new_session_reload_baseline.is_some()
     }
 
     pub fn reload_if_new_session_created(&mut self) -> bool {

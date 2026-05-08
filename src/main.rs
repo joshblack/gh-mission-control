@@ -64,6 +64,7 @@ where
     let tick_rate = Duration::from_millis(100); // balanced: responsive terminal output + low CPU
     let mut last_tick = Instant::now();
     let mut status_since: Option<Instant> = None;
+    let mut last_new_session_reload_check: Option<Instant> = None;
 
     loop {
         resize_embedded_terminal(app, terminal.size()?);
@@ -89,7 +90,8 @@ where
                             cols,
                         ) {
                             Ok(term) => {
-                                app.watch_for_new_session();
+                                app.capture_new_session_reload_baseline();
+                                last_new_session_reload_check = None;
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
@@ -152,13 +154,22 @@ where
             app.mode = Mode::Normal;
             app.terminal_fullscreen = false;
             app.clear_new_session_reload_watch();
+            last_new_session_reload_check = None;
             app.reload();
             app.status_message = Some("Session ended".into());
             status_since = Some(Instant::now());
         }
-        if app.reload_if_new_session_created() {
-            app.status_message = Some("New session loaded".into());
-            status_since = Some(Instant::now());
+        let should_check_for_new_session = app.has_new_session_reload_watch()
+            && last_new_session_reload_check
+                .map(|last_check| last_check.elapsed() >= Duration::from_secs(1))
+                .unwrap_or(true);
+        if should_check_for_new_session {
+            last_new_session_reload_check = Some(Instant::now());
+            if app.reload_if_new_session_created() {
+                last_new_session_reload_check = None;
+                app.status_message = Some("New session loaded".into());
+                status_since = Some(Instant::now());
+            }
         }
 
         // ── Event handling ────────────────────────────────────────────────────
