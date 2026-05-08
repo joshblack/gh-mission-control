@@ -127,11 +127,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let is_cursor = app.cursor == flat_idx;
                 let is_collapsed = app.collapsed_groups.contains(path);
                 let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused {
-                    "❯ "
-                } else {
-                    "  "
-                };
+                let prefix = if is_cursor && is_focused { "❯ " } else { "" };
                 let marker = if is_collapsed { "▸ " } else { "▾ " };
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
                 let style = if is_cursor && is_focused {
@@ -165,9 +161,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let name = session.display_name();
                 let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
                 let prefix = if is_cursor && is_focused {
-                    "  ❯ "
+                    "❯ "
                 } else {
-                    "    "
+                    "  "
                 };
 
                 let name_style = if is_cursor && is_focused {
@@ -202,9 +198,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             FlatItem::LoadMore { hidden_count, .. } => {
                 let is_cursor = app.cursor == flat_idx;
                 let prefix = if is_cursor && is_focused {
-                    "  ❯ "
+                    "❯ "
                 } else {
-                    "    "
+                    "  "
                 };
                 let style = if is_cursor && is_focused {
                     Style::default()
@@ -256,12 +252,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(block, area);
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "Select a session with j/k + Enter",
+                "Select a session.",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "Press [o] to open a live terminal session",
+                "Open it to show a live terminal session.",
                 Style::default().fg(Color::DarkGray),
             )),
         ]))
@@ -361,11 +357,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             "  No conversation history yet.",
             Style::default().fg(Color::DarkGray),
         )));
-        turn_lines.push(Line::from(Span::raw("")));
-        turn_lines.push(Line::from(Span::styled(
-            "  Press [o] to open this session in Copilot.",
-            Style::default().fg(Color::DarkGray),
-        )));
     } else {
         for turn in &turns {
             if let Some(ref msg) = turn.user_message {
@@ -419,16 +410,10 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         app.detail_scroll = max_scroll;
     }
 
-    let log_title = if is_focused && !turns.is_empty() {
-        " Conversation [k/j scroll, o=open live] "
-    } else {
-        " Conversation "
-    };
-
     let turns_para = Paragraph::new(Text::from(turn_lines))
         .block(
             Block::default()
-                .title(log_title)
+                .title(" Conversation ")
                 .title_style(Style::default().fg(Color::Gray))
                 .borders(Borders::NONE),
         )
@@ -567,7 +552,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Mode::Normal => {
             let t = match app.active_panel {
                 Panel::Sessions => {
-                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
+                    "Navigate: j/k  Page list: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
                 }
                 Panel::Detail => {
                     "Scroll: j/k  Back: Esc/h  Focus dir: f  Open: o  New: n  Reload: r  Quit: q"
