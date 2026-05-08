@@ -1,4 +1,4 @@
-use crate::terminal::tmux_session_name;
+use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::fs;
@@ -371,7 +371,7 @@ fn active_tmux_session_names() -> HashSet<String> {
 
     String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter(|name| name.starts_with("ghmc_"))
+        .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
         .map(ToString::to_string)
         .collect()
 }

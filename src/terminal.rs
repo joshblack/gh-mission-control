@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
+pub(crate) const TMUX_SESSION_PREFIX: &str = "ghmc_";
 
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {
@@ -255,7 +256,7 @@ pub(crate) fn tmux_session_name(session_id: &str) -> String {
         .collect();
 
     format!(
-        "ghmc_{}",
+        "{TMUX_SESSION_PREFIX}{}",
         sanitized
             .chars()
             .take(TMUX_SESSION_NAME_MAX_LEN)
