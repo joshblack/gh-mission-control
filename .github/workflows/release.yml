@@ -55,7 +55,7 @@ jobs:
             target: aarch64-apple-darwin
             asset_suffix: darwin-arm64
             binary_name: gh-pilot
-          - os: windows-latest
+          - os: windows-2025-vs2026
             target: x86_64-pc-windows-msvc
             asset_suffix: windows-amd64.exe
             binary_name: gh-pilot.exe
