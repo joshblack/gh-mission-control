@@ -260,6 +260,8 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
             .map(|state| format!("Remote agent task ({state})"))
     });
 
+    let remote_url = remote_task_url(repository.as_deref(), &id);
+
     Some(CopilotSession {
         id,
         source: SessionSource::Remote,
@@ -277,11 +279,20 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
         updated_at,
         status: remote_status(state.as_deref()),
         remote_state: state,
-        remote_url: value_text(task.get("pullRequestUrl")),
+        remote_url,
         remote_user: value_text(task.get("user")),
         pull_request,
         remote_log: None,
     })
+}
+
+fn remote_task_url(repository: Option<&str>, id: &str) -> Option<String> {
+    let repository = repository?;
+    let (owner, repo) = repository.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{repo}/tasks/{id}"))
 }
 
 pub fn load_remote_task_log(session_id: &str) -> String {
@@ -825,9 +836,25 @@ mod tests {
         assert_eq!(session.display_name(), "Fix remote bug");
         assert_eq!(session.remote_user.as_deref(), Some("octocat"));
         assert_eq!(
+            session.remote_url.as_deref(),
+            Some("https://github.com/owner/repo/tasks/task-1")
+        );
+        assert_eq!(
             session.pull_request.as_deref(),
             Some("#42 Fix remote bug (OPEN)")
         );
+    }
+
+    #[test]
+    fn remote_task_url_requires_owner_and_repo() {
+        assert_eq!(
+            remote_task_url(Some("owner/repo"), "task-1").as_deref(),
+            Some("https://github.com/owner/repo/tasks/task-1")
+        );
+        assert_eq!(remote_task_url(None, "task-1"), None);
+        assert_eq!(remote_task_url(Some("repo"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/repo"), ""), None);
     }
 
     #[test]
