@@ -179,10 +179,10 @@ where
                         )
                     };
                     match launch_result {
-                        Ok(tmux_session) => {
+                        Ok(maybe_tmux_session) => {
                             let new_session_id = app.reload_if_new_session_created();
                             let tmux_rename_error = new_session_id.as_deref().and_then(|id| {
-                                tmux_session.as_deref().and_then(|tmux_session| {
+                                maybe_tmux_session.as_deref().and_then(|tmux_session| {
                                     reuse_tmux_session(tmux_session, id).err()
                                 })
                             });

@@ -347,11 +347,8 @@ pub fn is_inside_tmux() -> bool {
 }
 
 pub fn bootstrap_tui_tmux_session() -> anyhow::Result<bool> {
-    if is_inside_tmux()
-        || std::env::var_os(DISABLE_TMUX_BOOTSTRAP_ENV)
-            .map(|value| value != "0")
-            .unwrap_or(false)
-    {
+    let disable_bootstrap = std::env::var_os(DISABLE_TMUX_BOOTSTRAP_ENV);
+    if is_inside_tmux() || tmux_bootstrap_disabled(disable_bootstrap.as_deref()) {
         return Ok(false);
     }
 
@@ -367,6 +364,10 @@ pub fn bootstrap_tui_tmux_session() -> anyhow::Result<bool> {
         anyhow::bail!("tmux new-session exited with {status}");
     }
     Ok(true)
+}
+
+fn tmux_bootstrap_disabled(value: Option<&OsStr>) -> bool {
+    value.map(|value| value != "0").unwrap_or(false)
 }
 
 pub fn open_copilot_split(
@@ -705,10 +706,18 @@ mod tests {
     }
 
     #[test]
-    fn tmux_session_name_sanitizes_split_pane_titles() {
+    fn tmux_session_name_sanitizes_colons_and_spaces() {
         assert_eq!(
             tmux_session_name("session:with spaces"),
             "ghpilot_session_with_spaces"
         );
+    }
+
+    #[test]
+    fn tmux_bootstrap_disable_env_treats_zero_as_enabled() {
+        assert!(!tmux_bootstrap_disabled(None));
+        assert!(!tmux_bootstrap_disabled(Some(OsStr::new("0"))));
+        assert!(tmux_bootstrap_disabled(Some(OsStr::new("1"))));
+        assert!(tmux_bootstrap_disabled(Some(OsStr::new("true"))));
     }
 }
