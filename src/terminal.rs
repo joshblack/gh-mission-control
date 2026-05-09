@@ -392,7 +392,7 @@ pub fn kill_all_tmux_sessions() -> anyhow::Result<usize> {
         .stderr(Stdio::null())
         .output()?;
     if !output.status.success() {
-        anyhow::bail!("tmux list-sessions exited with {}", output.status);
+        return Ok(0);
     }
 
     let sessions = pilot_tmux_sessions_from_output(&output.stdout);
