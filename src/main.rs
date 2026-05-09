@@ -429,7 +429,7 @@ fn should_strip_csi(sequence: &[u8]) -> bool {
     let params = &sequence[..sequence.len() - 1];
     match final_byte {
         b'c' | b'n' | b'x' => true,
-        b'p' => params.contains(&b'$') && params.contains(&b'?'),
+        b'p' => is_decrqm_report_request(params),
         b'q' => params == b">",
         b't' => is_window_report_request(params),
         _ => false,
@@ -440,6 +440,15 @@ fn should_strip_osc(sequence: &[u8]) -> bool {
     sequence
         .split(|byte| *byte == b';')
         .any(|param| param == b"?")
+}
+
+fn is_decrqm_report_request(params: &[u8]) -> bool {
+    params.len() > 2
+        && params.starts_with(b"?")
+        && params.ends_with(b"$")
+        && params[1..params.len() - 1]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || *byte == b';')
 }
 
 fn is_window_report_request(params: &[u8]) -> bool {
@@ -815,7 +824,7 @@ mod tests {
         let mut filter = TerminalPassthroughFilter::default();
 
         assert_eq!(
-            filter.filter(b"hello\x1b[6n\x1b[?25l\x1b]10;?\x07world"),
+            filter.filter(b"hello\x1b[6n\x1b[?2026$p\x1b[?25l\x1b]10;?\x07world"),
             b"hello\x1b[?25lworld"
         );
     }
@@ -825,8 +834,8 @@ mod tests {
         let mut filter = TerminalPassthroughFilter::default();
 
         assert_eq!(
-            filter.filter(b"\x1b[38;2;1;2;3m\x1b]9;4;1;50\x07text"),
-            b"\x1b[38;2;1;2;3m\x1b]9;4;1;50\x07text"
+            filter.filter(b"\x1b[38;2;1;2;3m\x1b[2 q\x1b[$?p\x1b]9;4;1;50\x07text"),
+            b"\x1b[38;2;1;2;3m\x1b[2 q\x1b[$?p\x1b]9;4;1;50\x07text"
         );
     }
 
