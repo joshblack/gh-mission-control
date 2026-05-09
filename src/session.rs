@@ -394,7 +394,7 @@ fn collect_remote_log_stderr(handle: Option<std::thread::JoinHandle<String>>) ->
 
 fn sanitize_remote_log(log: &str) -> String {
     log.chars()
-        .filter(|ch| *ch == '\n' || *ch == '\t' || !ch.is_control())
+        .filter(|ch| ch == &'\n' || ch == &'\t' || !ch.is_control())
         .collect()
 }
 
@@ -857,10 +857,10 @@ mod tests {
 
     #[test]
     fn sanitize_remote_log_removes_control_characters() {
-        assert_eq!(
-            sanitize_remote_log("start\u{1b}[31m red\u{0} text\nnext\tline"),
-            "start[31m red text\nnext\tline"
-        );
+        let sanitized = sanitize_remote_log("start\u{1b}[31m red\u{0} text\nnext\tline");
+
+        assert_eq!(sanitized, "start[31m red text\nnext\tline");
+        assert!(!sanitized.contains('\u{1b}'));
     }
 
     #[test]
