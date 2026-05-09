@@ -1030,11 +1030,11 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
-            "Launch: Enter  Cancel: Esc".to_string(),
+            "Launch: Enter  Suggestions: Tab  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::DirectoryFilter => (
-            "Apply: Enter  Clear input: Ctrl+U  Cancel: Esc".to_string(),
+            "Apply: Enter  Suggestions: Tab  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::Terminal => (
@@ -1190,8 +1190,17 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         help_heading("New session prompt"),
         help_shortcut("Enter", "Launch in the entered directory"),
+        help_shortcut("Tab / Shift+Tab", "Cycle directory suggestions"),
+        help_shortcut("Ctrl+U", "Clear input"),
         help_shortcut("Esc", "Cancel"),
         help_shortcut("Type", "Edit the directory path"),
+        Line::from(""),
+        help_heading("Directory filter prompt"),
+        help_shortcut("Enter", "Apply the directory filter"),
+        help_shortcut("Tab / Shift+Tab", "Cycle directory suggestions"),
+        help_shortcut("Ctrl+U", "Clear input"),
+        help_shortcut("Esc", "Cancel"),
+        help_shortcut("Type", "Edit the directory filter"),
         Line::from(""),
         help_heading("Shortcut help"),
         help_shortcut("j / ↓ / scroll", "Scroll down"),

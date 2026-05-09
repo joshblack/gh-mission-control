@@ -307,7 +307,7 @@ fn resize_embedded_terminal(app: &mut App, term_size: ratatui::layout::Size) {
 fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match app.mode {
         Mode::Normal => handle_normal(app, key, modifiers),
-        Mode::NewSessionDir => handle_input(app, key),
+        Mode::NewSessionDir => handle_input(app, key, modifiers),
         Mode::DirectoryFilter => handle_directory_filter_input(app, key, modifiers),
         Mode::Terminal => handle_terminal(app, key, modifiers),
         Mode::Help => handle_help(app, key),
@@ -405,12 +405,17 @@ fn handle_help(app: &mut App, key: KeyCode) {
     }
 }
 
-fn handle_input(app: &mut App, key: KeyCode) {
+fn handle_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match key {
         KeyCode::Enter => app.confirm_new_session(),
         KeyCode::Esc => app.cancel_input(),
+        KeyCode::Tab => app.complete_input_with_next_directory_suggestion(false),
+        KeyCode::BackTab => app.complete_input_with_next_directory_suggestion(true),
         KeyCode::Backspace => {
             app.input_buffer.pop();
+        }
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.input_buffer.clear();
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
@@ -423,6 +428,8 @@ fn handle_directory_filter_input(app: &mut App, key: KeyCode, modifiers: KeyModi
     match key {
         KeyCode::Enter => app.confirm_directory_filter(),
         KeyCode::Esc => app.cancel_input(),
+        KeyCode::Tab => app.complete_input_with_next_directory_suggestion(false),
+        KeyCode::BackTab => app.complete_input_with_next_directory_suggestion(true),
         KeyCode::Backspace => {
             app.input_buffer.pop();
         }
