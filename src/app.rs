@@ -602,7 +602,11 @@ impl App {
 
     pub fn close_selected_session(&mut self) {
         if let Some(idx) = self.selected_session.or_else(|| self.session_at_cursor()) {
-            if !self.can_close_session(idx) {
+            if self.sessions[idx].source != SessionSource::Local {
+                return;
+            }
+            if self.sessions[idx].status == SessionStatus::Idle {
+                self.status_message = Some("No active tmux session to close".into());
                 return;
             }
             self.pending_action = PendingAction::CloseSession {
@@ -1528,11 +1532,22 @@ mod tests {
 
     #[test]
     fn closing_idle_local_session_does_not_queue_close_action() {
-        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+        let mut app = app_with_sessions(vec![session_with_details(
+            "local",
+            SessionSource::Local,
+            "/tmp",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
 
         app.close_selected_session();
 
         assert!(matches!(app.pending_action, PendingAction::None));
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("No active tmux session to close")
+        );
     }
 
     #[test]
