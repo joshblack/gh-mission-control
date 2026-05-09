@@ -6,13 +6,16 @@ mod ui;
 use anyhow::{Context, Result};
 use app::{App, Mode, Panel, PendingAction};
 use crossterm::{
+    cursor::MoveTo,
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
         MouseEvent, MouseEventKind,
     },
     execute,
+    style::{Color, ResetColor, SetBackgroundColor},
     terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen, SetTitle,
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
@@ -28,6 +31,12 @@ use terminal::{
     EmbeddedTerminal,
 };
 
+const TERMINAL_BACKGROUND_COLOR: Color = Color::Rgb {
+    r: 0x1a,
+    g: 0x1b,
+    b: 0x26,
+};
+
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
     let launch_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -35,8 +44,7 @@ fn main() -> Result<()> {
 
     enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-        .context("Failed to enter alternate screen")?;
+    enter_tui_screen(&mut stdout).context("Failed to enter alternate screen")?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
@@ -49,7 +57,8 @@ fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        ResetColor
     )
     .ok();
     terminal.show_cursor().ok();
@@ -59,6 +68,18 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn enter_tui_screen<W: Write>(writer: &mut W) -> Result<()> {
+    execute!(
+        writer,
+        EnterAlternateScreen,
+        SetBackgroundColor(TERMINAL_BACKGROUND_COLOR),
+        Clear(ClearType::All),
+        MoveTo(0, 0),
+        EnableMouseCapture
+    )?;
     Ok(())
 }
 
@@ -317,19 +338,16 @@ where
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        ResetColor
     )
     .context("Failed to leave TUI before native terminal attach")?;
 
     let attach_result = attach_tmux_session(tmux_session);
 
     enable_raw_mode().context("Failed to re-enable raw mode")?;
-    execute!(
-        terminal.backend_mut(),
-        EnterAlternateScreen,
-        EnableMouseCapture
-    )
-    .context("Failed to restore TUI after native terminal attach")?;
+    enter_tui_screen(terminal.backend_mut())
+        .context("Failed to restore TUI after native terminal attach")?;
     terminal.clear()?;
 
     attach_result
