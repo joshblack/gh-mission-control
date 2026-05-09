@@ -26,12 +26,19 @@ impl SessionStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionSource {
+    Local,
+    Remote,
+}
+
 // ── Session model ────────────────────────────────────────────────────────────
 
 /// A Copilot CLI session read from `~/.copilot/session-state/<id>/workspace.yaml`.
 #[derive(Debug, Clone)]
 pub struct CopilotSession {
     pub id: String,
+    pub source: SessionSource,
     /// Working directory where the session was started
     pub cwd: PathBuf,
     /// Git root (may differ from cwd)
@@ -50,6 +57,10 @@ pub struct CopilotSession {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub status: SessionStatus,
+    pub remote_state: Option<String>,
+    pub remote_url: Option<String>,
+    pub remote_user: Option<String>,
+    pub pull_request: Option<String>,
 }
 
 impl CopilotSession {
@@ -76,6 +87,12 @@ impl CopilotSession {
 
     /// Key used for grouping (the cwd path, shortened for display).
     pub fn group_key(&self) -> String {
+        if self.source == SessionSource::Remote {
+            return self
+                .repository
+                .clone()
+                .unwrap_or_else(|| "Remote agent tasks".to_string());
+        }
         self.cwd.to_string_lossy().to_string()
     }
 }
@@ -148,6 +165,7 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     }
 
     // Sort newest-first by updated_at
+    sessions.extend(load_remote_agent_tasks());
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
 }
@@ -158,8 +176,138 @@ pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSessi
     let active_tmux_sessions = active_tmux_session_names();
 
     for session in sessions {
+        if session.source == SessionSource::Remote {
+            continue;
+        }
         session.status =
             detect_session_status(copilot_dir, &db_path, &session.id, &active_tmux_sessions);
+    }
+}
+
+fn load_remote_agent_tasks() -> Vec<CopilotSession> {
+    let fields = [
+        "completedAt",
+        "createdAt",
+        "id",
+        "name",
+        "pullRequestNumber",
+        "pullRequestState",
+        "pullRequestTitle",
+        "pullRequestUrl",
+        "repository",
+        "state",
+        "updatedAt",
+        "user",
+    ]
+    .join(",");
+    let output = Command::new("gh")
+        .args([
+            "agent-task",
+            "list",
+            "--json",
+            fields.as_str(),
+            "--limit",
+            "100",
+        ])
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let tasks = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout)
+        .ok()
+        .unwrap_or_default();
+
+    tasks
+        .into_iter()
+        .filter_map(remote_task_from_json)
+        .collect()
+}
+
+fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
+    let id = value_text(task.get("id"))?;
+    let repository = value_text(task.get("repository"));
+    let name = value_text(task.get("name"));
+    let state = value_text(task.get("state"));
+    let created_at = value_text(task.get("createdAt"))
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+    let updated_at = value_text(task.get("updatedAt"))
+        .or_else(|| value_text(task.get("completedAt")))
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or(created_at);
+    let pull_request = format_pull_request(
+        task.get("pullRequestNumber"),
+        task.get("pullRequestTitle"),
+        task.get("pullRequestState"),
+    );
+
+    Some(CopilotSession {
+        id,
+        source: SessionSource::Remote,
+        cwd: repository
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("Remote agent tasks")),
+        git_root: None,
+        repository,
+        branch: None,
+        summary: name,
+        user_named: false,
+        created_at,
+        updated_at,
+        status: remote_status(state.as_deref()),
+        remote_state: state,
+        remote_url: value_text(task.get("pullRequestUrl")),
+        remote_user: value_text(task.get("user")),
+        pull_request,
+    })
+}
+
+fn value_text(value: Option<&serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Object(map) => ["login", "name", "nameWithOwner", "url"]
+            .into_iter()
+            .find_map(|key| map.get(key).and_then(|value| value_text(Some(value)))),
+        _ => None,
+    }
+}
+
+fn format_pull_request(
+    number: Option<&serde_json::Value>,
+    title: Option<&serde_json::Value>,
+    state: Option<&serde_json::Value>,
+) -> Option<String> {
+    let number = value_text(number)?;
+    let title = value_text(title);
+    let state = value_text(state);
+    let mut label = format!("#{number}");
+    if let Some(title) = title {
+        label.push_str(&format!(" {title}"));
+    }
+    if let Some(state) = state {
+        label.push_str(&format!(" ({state})"));
+    }
+    Some(label)
+}
+
+fn remote_status(state: Option<&str>) -> SessionStatus {
+    match state.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "queued" | "pending" | "waiting" => SessionStatus::Waiting,
+        "in_progress" | "in-progress" | "running" | "started" => SessionStatus::Running,
+        "failed" | "failure" | "error" | "errored" | "cancelled" | "canceled" | "timed_out" => {
+            SessionStatus::Error
+        }
+        _ => SessionStatus::Idle,
     }
 }
 
@@ -279,6 +427,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
 
     Some(CopilotSession {
         id,
+        source: SessionSource::Local,
         cwd,
         git_root,
         repository,
@@ -288,6 +437,10 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         created_at,
         updated_at,
         status: SessionStatus::Idle, // will be updated by caller
+        remote_state: None,
+        remote_url: None,
+        remote_user: None,
+        pull_request: None,
     })
 }
 

@@ -1,5 +1,5 @@
 use crate::app::{App, FlatItem, Mode, Panel};
-use crate::session::{load_turns, session_db_path, SessionStatus};
+use crate::session::{load_turns, session_db_path, SessionSource, SessionStatus};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -16,6 +16,7 @@ const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+const REMOTE_COLOR: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
 const GROUP_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = Color::Rgb(0x24, 0x28, 0x3b);
@@ -198,13 +199,22 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(TEXT_COLOR)
                 };
 
-                items.push(ListItem::new(Line::from(vec![
+                let mut spans = vec![
                     Span::raw(prefix),
                     Span::styled(status_sym, Style::default().fg(status_color)),
                     Span::raw(" "),
+                ];
+                if session.source == SessionSource::Remote {
+                    spans.push(Span::styled(
+                        " ",
+                        remote_icon_style(is_cursor && is_focused),
+                    ));
+                }
+                spans.extend([
                     Span::styled(name, name_style),
                     Span::styled(format!("  {time_str}"), Style::default().fg(MUTED_COLOR)),
-                ])));
+                ]);
+                items.push(ListItem::new(Line::from(spans)));
 
                 if is_cursor {
                     list_state.select(Some(list_idx));
@@ -304,11 +314,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(1)])
-        .split(inner);
-
     // Info card
     let (status_color, status_sym) = status_display(&session.status);
 
@@ -343,6 +348,36 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(branch.clone(), Style::default().fg(TEXT_COLOR)),
         ]));
     }
+    if session.source == SessionSource::Remote {
+        let source = session
+            .remote_state
+            .as_ref()
+            .map(|state| format!("Remote agent task ({state})"))
+            .unwrap_or_else(|| "Remote agent task".to_string());
+        info_lines.push(Line::from(vec![
+            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(" ", Style::default().fg(REMOTE_COLOR)),
+            Span::styled(source, Style::default().fg(REMOTE_COLOR)),
+        ]));
+        if let Some(ref user) = session.remote_user {
+            info_lines.push(Line::from(vec![
+                Span::styled("  User:      ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(user.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+        if let Some(ref pull_request) = session.pull_request {
+            info_lines.push(Line::from(vec![
+                Span::styled("  PR:        ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(pull_request.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+        if let Some(ref url) = session.remote_url {
+            info_lines.push(Line::from(vec![
+                Span::styled("  URL:       ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(url.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+    }
     info_lines.push(Line::from(vec![
         Span::styled("  Updated:   ", Style::default().fg(MUTED_COLOR)),
         Span::styled(
@@ -358,6 +393,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         ),
     ]));
 
+    let info_height = (info_lines.len() as u16 + 1).min(inner.height);
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(info_height), Constraint::Min(1)])
+        .split(inner);
+
     let info_card = Paragraph::new(info_lines)
         .block(
             Block::default()
@@ -371,11 +412,25 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Conversation turns
     let db_path = session_db_path(&app.copilot_dir);
-    let turns = load_turns(&db_path, &session.id);
+    let turns = if session.source == SessionSource::Remote {
+        Vec::new()
+    } else {
+        load_turns(&db_path, &session.id)
+    };
 
     let mut turn_lines: Vec<Line> = Vec::new();
 
-    if turns.is_empty() {
+    if session.source == SessionSource::Remote {
+        turn_lines.push(Line::from(Span::styled(
+            "  Remote agent task.",
+            Style::default().fg(REMOTE_COLOR),
+        )));
+        turn_lines.push(Line::from(Span::raw("")));
+        turn_lines.push(Line::from(Span::styled(
+            "  Conversation history is not available locally.",
+            Style::default().fg(MUTED_COLOR),
+        )));
+    } else if turns.is_empty() {
         turn_lines.push(Line::from(Span::styled(
             "  No conversation history yet.",
             Style::default().fg(MUTED_COLOR),
@@ -669,6 +724,15 @@ fn status_display(status: &SessionStatus) -> (Color, &'static str) {
         SessionStatus::Waiting => (WAITING_COLOR, "◐"),
         SessionStatus::Idle => (IDLE_COLOR, "○"),
         SessionStatus::Error => (ERROR_COLOR, "✕"),
+    }
+}
+
+fn remote_icon_style(is_selected: bool) -> Style {
+    let style = Style::default().fg(REMOTE_COLOR);
+    if is_selected {
+        style.bg(SELECTED_BG)
+    } else {
+        style
     }
 }
 

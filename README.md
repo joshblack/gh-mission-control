@@ -9,6 +9,7 @@ A **terminal session manager for AI coding agents** — a `gh` extension written
 ## Features
 
 - **Reads real Copilot CLI sessions** from `~/.copilot/session-state/` — no extra configuration
+- **Shows remote agent tasks** from `gh agent-task list` when available, marked with a purple GitHub icon (``)
 - **Split-pane TUI** — sessions list on the left, session detail/conversation on the right
 - **Sessions grouped by working directory** and sorted newest-first
 - **Smart status polling** with Running (`●` green), Waiting (`◐` yellow), Idle (`○` gray), and Error (`✕` red) indicators
@@ -49,6 +50,7 @@ cargo build --release
 
 - [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — install with `gh copilot`
 - Sessions are stored in `~/.copilot/session-state/` (created automatically when you run `copilot`)
+- Optional: an authenticated GitHub CLI with `gh agent-task list` support to show remote agent tasks
 
 ---
 
@@ -93,6 +95,7 @@ Sessions are stored by the Copilot CLI itself. `gh-mission-control` reads from:
 
 - **Session metadata**: `~/.copilot/session-state/<id>/workspace.yaml`
 - **Conversation history**: `~/.copilot/session-store.db` (SQLite)
+- **Remote agent tasks**: `gh agent-task list --json ...`
 
 ### `workspace.yaml` structure
 

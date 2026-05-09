@@ -1,5 +1,6 @@
 use crate::session::{
-    group_sessions, load_sessions, refresh_session_statuses, CopilotSession, SessionStatus,
+    group_sessions, load_sessions, refresh_session_statuses, CopilotSession, SessionSource,
+    SessionStatus,
 };
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
@@ -364,6 +365,12 @@ impl App {
     /// Queue opening an embedded terminal for the session under the cursor.
     pub fn open_session_embedded(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
+            if self.sessions[idx].source == SessionSource::Remote {
+                self.selected_session = Some(idx);
+                self.active_panel = Panel::Detail;
+                self.status_message = Some("Remote agent tasks cannot be opened locally".into());
+                return;
+            }
             let id = self.sessions[idx].id.clone();
             let cwd = self.sessions[idx].cwd.clone();
             self.selected_session = Some(idx);
