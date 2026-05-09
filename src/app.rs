@@ -206,7 +206,6 @@ impl App {
     pub fn terminal_title(&self) -> String {
         self.current_session_title()
             .and_then(|title| sanitize_terminal_title_part(&title))
-            .map(|title| format!("{title} — {APP_TERMINAL_TITLE}"))
             .unwrap_or_else(|| APP_TERMINAL_TITLE.to_string())
     }
 
@@ -954,7 +953,7 @@ mod tests {
     fn terminal_title_uses_selected_session_name() {
         let app = app_with_sessions(vec![session_with_summary("session-1", "Fix title display")]);
 
-        assert_eq!(app.terminal_title(), "Fix title display — gh pilot");
+        assert_eq!(app.terminal_title(), "Fix title display");
     }
 
     #[test]
@@ -964,7 +963,7 @@ mod tests {
             "Fix \u{1b}]0;spoofed\u{7}title",
         )]);
 
-        assert_eq!(app.terminal_title(), "Fix ]0;spoofed title — gh pilot");
+        assert_eq!(app.terminal_title(), "Fix ]0;spoofed title");
     }
 
     #[test]
