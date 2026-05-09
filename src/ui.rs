@@ -1,5 +1,5 @@
 use crate::app::{App, Mode, Panel, SessionFilter};
-use crate::session::{load_turns, session_db_path, CopilotSession, SessionStatus};
+use crate::session::{load_turns, session_db_path, CopilotSession, SessionSource, SessionStatus};
 use chrono::{DateTime, Utc};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
@@ -17,6 +17,8 @@ const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+const REMOTE_COLOR: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
+const TERMINAL_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
@@ -30,6 +32,8 @@ const MARKDOWN_CODE_COLOR: Color = RUNNING_COLOR;
 const MAX_LIST_MARKER_DIGITS: usize = 9;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
+/// Maximum lines shown for remote task log previews before truncating.
+const MAX_REMOTE_LOG_LINES: usize = 200;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -292,18 +296,24 @@ fn session_title_line(
     now: DateTime<Utc>,
 ) -> Line<'static> {
     let time = relative_time(session, now);
-    let fixed_width = prefix.chars().count() + time.chars().count() + 1;
+    let icon = session_icon(session);
+    let fixed_width = prefix.chars().count() + icon.chars().count() + time.chars().count() + 1;
     let title_width = width.saturating_sub(fixed_width).max(1);
     let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
-    let used_width = prefix.chars().count() + title.chars().count() + time.chars().count();
+    let used_width = prefix.chars().count()
+        + icon.chars().count()
+        + title.chars().count()
+        + time.chars().count();
     let spacer = " ".repeat(width.saturating_sub(used_width).max(1));
 
-    Line::from(vec![
-        active_prefix(prefix, is_active),
+    let mut spans = vec![active_prefix(prefix, is_active)];
+    spans.push(Span::styled(icon, session_icon_style(session, is_active)));
+    spans.extend([
         Span::styled(title, name_style),
         Span::raw(spacer),
         Span::styled(time, Style::default().fg(MUTED_COLOR)),
-    ])
+    ]);
+    Line::from(spans)
 }
 
 fn session_description_line(
@@ -317,7 +327,13 @@ fn session_description_line(
         .as_deref()
         .map(single_line)
         .filter(|message| !message.is_empty())
-        .unwrap_or_else(|| "No agent response yet.".to_string());
+        .unwrap_or_else(|| {
+            if session.source == SessionSource::Remote {
+                "Remote agent task.".to_string()
+            } else {
+                "No agent response yet.".to_string()
+            }
+        });
     let prefix_width = prefix.chars().count();
     let description = truncate_ellipsis(&message, width.saturating_sub(prefix_width).max(1));
 
@@ -424,15 +440,10 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(1)])
-        .split(inner);
-
     // Info card
     let (status_color, status_sym) = status_display(&session.status);
 
-    let info_lines = vec![
+    let mut info_lines = vec![
         Line::from(vec![
             Span::styled("  Title:     ", Style::default().fg(MUTED_COLOR)),
             Span::styled(
@@ -458,6 +469,64 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         ]),
     ];
 
+    if let Some(ref repo) = session.repository {
+        info_lines.push(Line::from(vec![
+            Span::styled("  Repo:      ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(repo.clone(), Style::default().fg(TEXT_COLOR)),
+        ]));
+    }
+    if let Some(ref branch) = session.branch {
+        info_lines.push(Line::from(vec![
+            Span::styled("  Branch:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(branch.clone(), Style::default().fg(TEXT_COLOR)),
+        ]));
+    }
+    if session.source == SessionSource::Remote {
+        let source = session
+            .remote_state
+            .as_ref()
+            .map(|state| format!("Remote agent task ({state})"))
+            .unwrap_or_else(|| "Remote agent task".to_string());
+        info_lines.push(Line::from(vec![
+            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(" ", Style::default().fg(REMOTE_COLOR)),
+            Span::styled(source, Style::default().fg(REMOTE_COLOR)),
+        ]));
+        if let Some(ref user) = session.remote_user {
+            info_lines.push(Line::from(vec![
+                Span::styled("  User:      ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(user.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+        if let Some(ref pull_request) = session.pull_request {
+            info_lines.push(Line::from(vec![
+                Span::styled("  PR:        ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(pull_request.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+        if let Some(ref url) = session.remote_url {
+            info_lines.push(Line::from(vec![
+                Span::styled("  URL:       ", Style::default().fg(MUTED_COLOR)),
+                Span::styled(url.clone(), Style::default().fg(TEXT_COLOR)),
+            ]));
+        }
+    } else {
+        info_lines.push(Line::from(vec![
+            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(session_icon(session), session_icon_style(session, false)),
+            Span::styled(
+                "Local terminal session",
+                Style::default().fg(TERMINAL_COLOR),
+            ),
+        ]));
+    }
+
+    let info_height = (info_lines.len() as u16 + 1).min(inner.height);
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(info_height), Constraint::Min(1)])
+        .split(inner);
+
     let info_card = Paragraph::new(info_lines)
         .block(
             Block::default()
@@ -471,11 +540,62 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Conversation turns
     let db_path = session_db_path(&app.copilot_dir);
-    let turns = load_turns(&db_path, &session.id);
+    let turns = if session.source == SessionSource::Remote {
+        Vec::new()
+    } else {
+        load_turns(&db_path, &session.id)
+    };
 
     let mut turn_lines: Vec<Line> = Vec::new();
 
-    if turns.is_empty() {
+    if session.source == SessionSource::Remote {
+        turn_lines.push(Line::from(Span::styled(
+            format!(
+                "  Remote agent task log: gh agent-task view {} --log",
+                session.id
+            ),
+            Style::default().fg(REMOTE_COLOR),
+        )));
+        turn_lines.push(Line::from(Span::raw("")));
+        match session.remote_log.as_deref() {
+            Some(log) if !log.is_empty() => {
+                if push_markdown_lines(
+                    &mut turn_lines,
+                    log,
+                    MARKDOWN_TEXT_COLOR,
+                    Some(MAX_REMOTE_LOG_LINES),
+                ) {
+                    turn_lines.push(Line::from(Span::styled(
+                        "  … (truncated)",
+                        Style::default().fg(MUTED_COLOR),
+                    )));
+                }
+            }
+            Some(_) => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  No remote task log output available.",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
+            None if app.is_remote_log_loading(&session.id) => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  Loading...",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
+            None => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  Press [Enter] to load this remote task log.",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
+        }
+        turn_lines.push(Line::from(Span::raw("")));
+        turn_lines.push(Line::from(Span::styled(
+            "  Press [o] to open this task in your browser.",
+            Style::default().fg(MUTED_COLOR),
+        )));
+    } else if turns.is_empty() {
         turn_lines.push(Line::from(Span::styled(
             "  No conversation history yet.",
             Style::default().fg(MUTED_COLOR),
@@ -532,7 +652,9 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         app.detail_scroll = max_scroll;
     }
 
-    let log_title = if is_focused && !turns.is_empty() {
+    let log_title = if is_focused && session.source == SessionSource::Remote {
+        " Preview [k/j scroll, o=open browser] "
+    } else if is_focused && !turns.is_empty() {
         " Conversation [k/j scroll, o=open live] "
     } else {
         " Conversation "
@@ -744,23 +866,31 @@ fn is_heading(trimmed: &str) -> bool {
 }
 
 fn split_list_marker(trimmed: &str) -> Option<(&str, &str)> {
-    if trimmed.len() >= 2 {
-        let marker = &trimmed[..1];
-        if matches!(marker, "-" | "*" | "+") && trimmed[1..].starts_with(char::is_whitespace) {
-            return Some((&trimmed[..2], &trimmed[2..]));
+    let mut chars = trimmed.char_indices();
+    if let Some((_, marker)) = chars.next() {
+        if matches!(marker, '-' | '*' | '+') {
+            if let Some((whitespace_start, whitespace)) = chars.next() {
+                if whitespace.is_whitespace() {
+                    let rest_start = whitespace_start + whitespace.len_utf8();
+                    return Some((&trimmed[..rest_start], &trimmed[rest_start..]));
+                }
+            }
         }
     }
 
     let marker_end = trimmed.find('.')?;
+    let after_dot = &trimmed[marker_end + 1..];
+    let whitespace = after_dot.chars().next()?;
     if marker_end == 0
         || marker_end > MAX_LIST_MARKER_DIGITS
         || !trimmed[..marker_end].chars().all(|ch| ch.is_ascii_digit())
-        || !trimmed[marker_end + 1..].starts_with(char::is_whitespace)
+        || !whitespace.is_whitespace()
     {
         return None;
     }
 
-    Some((&trimmed[..marker_end + 2], &trimmed[marker_end + 2..]))
+    let rest_start = marker_end + 1 + whitespace.len_utf8();
+    Some((&trimmed[..rest_start], &trimmed[rest_start..]))
 }
 
 fn status_display(status: &SessionStatus) -> (Color, &'static str) {
@@ -769,6 +899,26 @@ fn status_display(status: &SessionStatus) -> (Color, &'static str) {
         SessionStatus::Waiting => (WAITING_COLOR, "◐"),
         SessionStatus::Idle => (IDLE_COLOR, "○"),
         SessionStatus::Error => (ERROR_COLOR, "✕"),
+    }
+}
+
+fn session_icon(session: &CopilotSession) -> &'static str {
+    match session.source {
+        SessionSource::Local => " ",
+        SessionSource::Remote => " ",
+    }
+}
+
+fn session_icon_style(session: &CopilotSession, is_active: bool) -> Style {
+    let color = match session.source {
+        SessionSource::Local => TERMINAL_COLOR,
+        SessionSource::Remote => REMOTE_COLOR,
+    };
+    let style = Style::default().fg(color);
+    if is_active {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
     }
 }
 
@@ -1102,4 +1252,32 @@ fn short_path(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_list_marker_handles_ascii_markers() {
+        assert_eq!(split_list_marker("- item"), Some(("- ", "item")));
+        assert_eq!(split_list_marker("10. item"), Some(("10. ", "item")));
+    }
+
+    #[test]
+    fn split_list_marker_ignores_unicode_bullets() {
+        assert_eq!(split_list_marker("• item"), None);
+    }
+
+    #[test]
+    fn split_list_marker_handles_unicode_whitespace() {
+        assert_eq!(
+            split_list_marker("-\u{2003}item"),
+            Some(("-\u{2003}", "item"))
+        );
+        assert_eq!(
+            split_list_marker("1.\u{2003}item"),
+            Some(("1.\u{2003}", "item"))
+        );
+    }
 }

@@ -18,6 +18,7 @@ use session::copilot_binary;
 use std::{
     io::{self, Write},
     path::PathBuf,
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
@@ -69,6 +70,7 @@ where
     let mut last_status_poll = Instant::now();
 
     loop {
+        app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
         terminal.draw(|f| ui::draw(f, app))?;
 
@@ -142,6 +144,17 @@ where
                         status_since = Some(Instant::now());
                     }
                 }
+            }
+            PendingAction::OpenRemoteTask { url } => {
+                match open_url_in_browser(&url) {
+                    Ok(()) => {
+                        app.status_message = Some("Opened remote task in browser".into());
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Failed to open remote task: {e}"));
+                    }
+                }
+                status_since = Some(Instant::now());
             }
         }
 
@@ -231,6 +244,40 @@ where
 fn notify_waiting_agent() {
     let _ = io::stdout().write_all(b"\x07");
     let _ = io::stdout().flush();
+}
+
+fn open_url_in_browser(url: &str) -> Result<()> {
+    let (program, args) = browser_open_command(url);
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .output()
+        .with_context(|| format!("{program} failed to launch"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("{program} exited with {}", output.status);
+        }
+        anyhow::bail!("{stderr}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("open", vec![url])
+}
+
+#[cfg(target_os = "windows")]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("cmd", vec!["/C", "start", "", url])
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("xdg-open", vec![url])
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
@@ -444,5 +491,27 @@ mod tests {
         handle_normal(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
 
         assert_eq!(app.mode, Mode::DirectoryFilter);
+    }
+
+    #[test]
+    fn browser_open_command_uses_url_directly() {
+        let url = "https://github.com/owner/repo/pull/42/agent-sessions/task-1";
+        let (program, args) = browser_open_command(url);
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec![url]);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(program, "cmd");
+            assert_eq!(args, vec!["/C", "start", "", url]);
+        }
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec![url]);
+        }
     }
 }
