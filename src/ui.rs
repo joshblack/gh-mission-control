@@ -23,7 +23,7 @@ const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = IDLE_COLOR;
 const SECTION_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
-const MUTED_COLOR: Color = TEXT_COLOR;
+const MUTED_COLOR: Color = IDLE_COLOR;
 const USER_MSG_COLOR: Color = SECTION_COLOR;
 const AGENT_MSG_COLOR: Color = SECTION_COLOR;
 /// Maximum lines shown per assistant response before truncating.
@@ -745,10 +745,7 @@ fn push_text_lines(
             truncated = true;
             break;
         }
-        lines.push(Line::from(vec![
-            Span::styled("  ", style),
-            Span::styled(line.to_string(), style),
-        ]));
+        lines.push(Line::from(Span::styled(format!("  {line}"), style)));
     }
 
     truncated
