@@ -712,7 +712,7 @@ fn sanitize_terminal_title_part(title: &str) -> Option<String> {
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
-    let sanitized = sanitized.trim();
+    let sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
     (!sanitized.is_empty()).then(|| sanitized.to_string())
 }
 
@@ -958,7 +958,7 @@ mod tests {
             "Fix \u{1b}]0;spoofed\u{7}title",
         )]);
 
-        assert_eq!(app.terminal_title(), "Fix  ]0;spoofed title — gh pilot");
+        assert_eq!(app.terminal_title(), "Fix ]0;spoofed title — gh pilot");
     }
 
     #[test]
