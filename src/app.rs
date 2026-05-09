@@ -44,7 +44,7 @@ pub enum PendingAction {
     },
     /// Open a remote agent task in the browser.
     OpenRemoteTask {
-        id: String,
+        url: String,
     },
 }
 
@@ -324,11 +324,13 @@ impl App {
     pub fn open_session_embedded(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
             if self.sessions[idx].source == SessionSource::Remote {
-                let id = self.sessions[idx].id.clone();
                 self.selected_session = Some(idx);
                 self.active_panel = Panel::Detail;
                 self.load_selected_remote_preview();
-                self.pending_action = PendingAction::OpenRemoteTask { id };
+                match self.sessions[idx].remote_url.clone() {
+                    Some(url) => self.pending_action = PendingAction::OpenRemoteTask { url },
+                    None => self.status_message = Some("Remote task URL not available".into()),
+                }
                 return;
             }
             let id = self.sessions[idx].id.clone();
@@ -513,5 +515,21 @@ mod tests {
 
         assert!(!app.is_remote_log_loading("remote"));
         assert_eq!(app.sessions[0].remote_log.as_deref(), Some("log output"));
+    }
+
+    #[test]
+    fn opening_remote_task_uses_task_url() {
+        let mut remote = session("remote", SessionSource::Remote);
+        remote.remote_url = Some("https://github.com/owner/repo/tasks/remote".to_string());
+        let mut app = app_with_sessions(vec![remote]);
+
+        app.open_session_embedded();
+
+        match app.pending_action {
+            PendingAction::OpenRemoteTask { ref url } => {
+                assert_eq!(url, "https://github.com/owner/repo/tasks/remote");
+            }
+            _ => panic!("expected remote task to open in browser"),
+        }
     }
 }

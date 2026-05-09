@@ -145,8 +145,8 @@ where
                     }
                 }
             }
-            PendingAction::OpenRemoteTask { id } => {
-                match open_remote_task_in_browser(&id) {
+            PendingAction::OpenRemoteTask { url } => {
+                match open_url_in_browser(&url) {
                     Ok(()) => {
                         app.status_message = Some("Opened remote task in browser".into());
                     }
@@ -246,22 +246,38 @@ fn notify_waiting_agent() {
     let _ = io::stdout().flush();
 }
 
-fn open_remote_task_in_browser(id: &str) -> Result<()> {
-    let output = Command::new("gh")
-        .args(["agent-task", "view", id, "--web"])
+fn open_url_in_browser(url: &str) -> Result<()> {
+    let (program, args) = browser_open_command(url);
+    let output = Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .output()
-        .context("gh agent-task view --web failed to launch")?;
+        .with_context(|| format!("{program} failed to launch"))?;
     if output.status.success() {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            anyhow::bail!("gh agent-task view --web exited with {}", output.status);
+            anyhow::bail!("{program} exited with {}", output.status);
         }
         anyhow::bail!("{stderr}");
     }
+}
+
+#[cfg(target_os = "macos")]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("open", vec![url])
+}
+
+#[cfg(target_os = "windows")]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("cmd", vec!["/C", "start", "", url])
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn browser_open_command(url: &str) -> (&'static str, Vec<&str>) {
+    ("xdg-open", vec![url])
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
@@ -432,5 +448,34 @@ mod tests {
 
         handle_help(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn browser_open_command_uses_url_directly() {
+        let (program, args) = browser_open_command("https://github.com/owner/repo/tasks/task-1");
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec!["https://github.com/owner/repo/tasks/task-1"]);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(program, "cmd");
+            assert_eq!(
+                args,
+                vec![
+                    "/C",
+                    "start",
+                    "",
+                    "https://github.com/owner/repo/tasks/task-1"
+                ]
+            );
+        }
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec!["https://github.com/owner/repo/tasks/task-1"]);
+        }
     }
 }
