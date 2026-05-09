@@ -176,9 +176,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let is_selected = app.selected_session == Some(*idx);
 
         let name_style = if (is_cursor && is_focused) || is_selected {
-            Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(SECTION_COLOR)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(TEXT_COLOR)
+            Style::default().fg(SECTION_COLOR)
         };
 
         let prefix = if is_cursor && is_focused {
@@ -349,7 +351,12 @@ fn session_description_line(
 
     Line::from(vec![
         active_prefix(prefix, is_active),
-        Span::styled(description, Style::default().fg(MUTED_COLOR)),
+        Span::styled(
+            description,
+            Style::default()
+                .fg(MUTED_COLOR)
+                .add_modifier(Modifier::ITALIC),
+        ),
     ])
 }
 
@@ -896,10 +903,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             "Launch: Enter  Suggestions: ↑/↓  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
-        Mode::LaunchingNewSession => (
-            "Creating new Copilot session…".to_string(),
-            Style::default().fg(WAITING_COLOR),
-        ),
+        Mode::LaunchingNewSession => ("".to_string(), Style::default().fg(MUTED_COLOR)),
         Mode::DirectoryFilter => (
             "Apply: Enter  Suggestions: ↑/↓  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
