@@ -416,7 +416,8 @@ impl App {
             .iter()
             .position(|suggestion| suggestion == current);
         let next_index = match current_index {
-            Some(index) if reverse => index.checked_sub(1).unwrap_or(suggestions.len() - 1),
+            Some(0) if reverse => suggestions.len() - 1,
+            Some(index) if reverse => index - 1,
             Some(index) => (index + 1) % suggestions.len(),
             None if reverse => suggestions.len() - 1,
             None => 0,
