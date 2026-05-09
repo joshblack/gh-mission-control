@@ -348,22 +348,19 @@ pub(crate) fn tmux_session_name(session_id: &str) -> String {
     )
 }
 
-fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
-    let words = std::iter::once(copilot_bin.as_os_str().to_string_lossy().to_string()).chain(
-        args.iter()
-            .map(|arg| arg.as_ref().to_string_lossy().to_string()),
-    );
-    shell_words::join(words)
-}
-
 fn copilot_shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
     let words = [
         "env".to_string(),
         format!("TERM={COPILOT_TERM}"),
         format!("COLORTERM={COPILOT_COLORTERM}"),
-        shell_command(copilot_bin, args),
-    ];
-    words.join(" ")
+        copilot_bin.as_os_str().to_string_lossy().to_string(),
+    ]
+    .into_iter()
+    .chain(
+        args.iter()
+            .map(|arg| arg.as_ref().to_string_lossy().to_string()),
+    );
+    shell_words::join(words)
 }
 
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
@@ -488,7 +485,7 @@ mod tests {
 
         assert_eq!(
             command,
-            "env TERM=xterm-256color COLORTERM=truecolor /usr/local/bin/copilot -C '/tmp/project dir' '--resume=session-1'"
+            "env 'TERM=xterm-256color' 'COLORTERM=truecolor' /usr/local/bin/copilot -C '/tmp/project dir' '--resume=session-1'"
         );
     }
 }
