@@ -142,6 +142,7 @@ impl EmbeddedTerminal {
             let mut reader = reader;
             let mut child = child;
             let mut buf = [0u8; 4096];
+            let mut raw_output_open = true;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => {
@@ -150,7 +151,9 @@ impl EmbeddedTerminal {
                     }
                     Ok(n) => {
                         lock_parser(&parser_clone).process(&buf[..n]);
-                        let _ = raw_output_tx.send(buf[..n].to_vec());
+                        if raw_output_open && raw_output_tx.send(buf[..n].to_vec()).is_err() {
+                            raw_output_open = false;
+                        }
                     }
                 }
             }

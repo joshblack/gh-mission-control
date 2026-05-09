@@ -268,9 +268,7 @@ where
         }
     }
 
-    if terminal_passthrough_active || terminal_progress_visible {
-        write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
-    }
+    write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
 
     Ok(())
 }
