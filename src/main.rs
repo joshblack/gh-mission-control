@@ -136,12 +136,14 @@ where
                                 app.terminal_fullscreen = false;
                             }
                             Err(e) => {
+                                app.mode = Mode::Normal;
                                 app.status_message = Some(format!("Failed to launch: {e}"));
                                 status_since = Some(Instant::now());
                             }
                         }
                     }
                     None => {
+                        app.mode = Mode::Normal;
                         app.status_message = Some("Copilot CLI not found (run: gh copilot)".into());
                         status_since = Some(Instant::now());
                     }
@@ -310,6 +312,7 @@ fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match app.mode {
         Mode::Normal => handle_normal(app, key, modifiers),
         Mode::NewSessionDir => handle_input(app, key, modifiers),
+        Mode::LaunchingNewSession => {}
         Mode::DirectoryFilter => handle_directory_filter_input(app, key, modifiers),
         Mode::Terminal => handle_terminal(app, key, modifiers),
         Mode::Help => handle_help(app, key),

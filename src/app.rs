@@ -22,6 +22,8 @@ pub enum Mode {
     Normal,
     /// User is typing a directory path for a new copilot session.
     NewSessionDir,
+    /// A new copilot session launch has been queued and is starting up.
+    LaunchingNewSession,
     /// User is typing text to filter sessions by directory.
     DirectoryFilter,
     /// An embedded copilot session is live in the right panel.
@@ -436,8 +438,19 @@ impl App {
         };
         self.input_buffer.clear();
         self.directory_suggestion_cursor = None;
-        self.mode = Mode::Normal;
+        self.mode = Mode::LaunchingNewSession;
+        self.active_panel = Panel::Detail;
+        self.status_message = Some("Creating new Copilot session…".into());
         self.pending_action = PendingAction::LaunchNew { dir };
+    }
+
+    pub fn launching_new_session_dir(&self) -> Option<&Path> {
+        match &self.pending_action {
+            PendingAction::LaunchNew { dir } if self.mode == Mode::LaunchingNewSession => {
+                Some(dir.as_path())
+            }
+            _ => None,
+        }
     }
 
     pub fn cancel_input(&mut self) {
@@ -1048,6 +1061,25 @@ mod tests {
         app.begin_new_session();
 
         assert_eq!(app.input_buffer, "/work/filtered");
+    }
+
+    #[test]
+    fn confirming_new_session_shows_launching_state() {
+        let mut app = App::new(
+            PathBuf::from("/tmp/copilot"),
+            PathBuf::from("/work/project"),
+        );
+
+        app.begin_new_session();
+        app.confirm_new_session();
+
+        assert_eq!(app.mode, Mode::LaunchingNewSession);
+        assert_eq!(app.active_panel, Panel::Detail);
+        assert_eq!(
+            app.launching_new_session_dir(),
+            Some(Path::new("/work/project"))
+        );
+        assert!(app.status_message.is_some());
     }
 
     #[test]
