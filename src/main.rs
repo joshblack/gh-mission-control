@@ -76,6 +76,7 @@ where
     let mut last_status_poll = Instant::now();
     let mut terminal_progress_visible = false;
     let mut terminal_passthrough_active = false;
+    let mut terminal_passthrough_filter = TerminalPassthroughFilter::default();
     let mut last_terminal_title = String::new();
 
     loop {
@@ -86,9 +87,10 @@ where
         if should_passthrough_terminal(app) {
             if !terminal_passthrough_active {
                 terminal.clear()?;
+                terminal_passthrough_filter.reset();
                 terminal_passthrough_active = true;
             }
-            forward_terminal_raw_output(terminal, app)?;
+            forward_terminal_raw_output(terminal, app, &mut terminal_passthrough_filter)?;
             if let Some(term) = app.embedded_terminal.as_ref() {
                 term.clear_progress_event();
             }
@@ -98,6 +100,7 @@ where
                 write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
                 terminal_progress_visible = false;
                 terminal_passthrough_active = false;
+                terminal_passthrough_filter.reset();
             }
             discard_terminal_raw_output(app);
             terminal.draw(|f| ui::draw(f, app))?;
@@ -301,6 +304,7 @@ fn notify_waiting_agent() {
 fn forward_terminal_raw_output<B: ratatui::backend::Backend + Write>(
     terminal: &mut Terminal<B>,
     app: &App,
+    filter: &mut TerminalPassthroughFilter,
 ) -> Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -310,6 +314,7 @@ where
     };
 
     for chunk in term.drain_raw_output() {
+        let chunk = filter.filter(&chunk);
         terminal
             .backend_mut()
             .write_all(&chunk)
@@ -317,6 +322,131 @@ where
     }
     Write::flush(terminal.backend_mut()).context("Failed to flush terminal output")?;
     Ok(())
+}
+
+#[derive(Default)]
+struct TerminalPassthroughFilter {
+    pending: Vec<u8>,
+}
+
+impl TerminalPassthroughFilter {
+    fn reset(&mut self) {
+        self.pending.clear();
+    }
+
+    fn filter(&mut self, chunk: &[u8]) -> Vec<u8> {
+        let mut input = std::mem::take(&mut self.pending);
+        input.extend_from_slice(chunk);
+
+        let mut output = Vec::with_capacity(input.len());
+        let mut index = 0;
+        while index < input.len() {
+            if input[index] != 0x1b {
+                output.push(input[index]);
+                index += 1;
+                continue;
+            }
+
+            let Some(next) = input.get(index + 1).copied() else {
+                self.pending.extend_from_slice(&input[index..]);
+                break;
+            };
+
+            match next {
+                b'[' => {
+                    let Some(end) = find_csi_end(&input, index + 2) else {
+                        self.pending.extend_from_slice(&input[index..]);
+                        break;
+                    };
+                    if !should_strip_csi(&input[index + 2..=end]) {
+                        output.extend_from_slice(&input[index..=end]);
+                    }
+                    index = end + 1;
+                }
+                b']' => {
+                    let Some(end) = find_string_control_end(&input, index + 2) else {
+                        self.pending.extend_from_slice(&input[index..]);
+                        break;
+                    };
+                    let content_end = string_control_content_end(&input, end);
+                    if !should_strip_osc(&input[index + 2..content_end]) {
+                        output.extend_from_slice(&input[index..=end]);
+                    }
+                    index = end + 1;
+                }
+                b'P' => {
+                    let Some(end) = find_string_control_end(&input, index + 2) else {
+                        self.pending.extend_from_slice(&input[index..]);
+                        break;
+                    };
+                    index = end + 1;
+                }
+                b'Z' => {
+                    index += 2;
+                }
+                _ => {
+                    output.extend_from_slice(&input[index..index + 2]);
+                    index += 2;
+                }
+            }
+        }
+
+        output
+    }
+}
+
+fn find_csi_end(input: &[u8], start: usize) -> Option<usize> {
+    input[start..]
+        .iter()
+        .position(|byte| (0x40..=0x7e).contains(byte))
+        .map(|offset| start + offset)
+}
+
+fn find_string_control_end(input: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    while index < input.len() {
+        match input[index] {
+            b'\x07' => return Some(index),
+            b'\x1b' if input.get(index + 1) == Some(&b'\\') => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn string_control_content_end(input: &[u8], end: usize) -> usize {
+    if input.get(end) == Some(&b'\\') && end > 0 && input.get(end - 1) == Some(&b'\x1b') {
+        end - 1
+    } else {
+        end
+    }
+}
+
+fn should_strip_csi(sequence: &[u8]) -> bool {
+    let Some(final_byte) = sequence.last() else {
+        return false;
+    };
+    let params = &sequence[..sequence.len() - 1];
+    match final_byte {
+        b'c' | b'n' | b'x' => true,
+        b'p' => params.contains(&b'$') && params.contains(&b'?'),
+        b'q' => params == b">",
+        b't' => is_window_report_request(params),
+        _ => false,
+    }
+}
+
+fn should_strip_osc(sequence: &[u8]) -> bool {
+    sequence
+        .split(|byte| *byte == b';')
+        .any(|param| param == b"?")
+}
+
+fn is_window_report_request(params: &[u8]) -> bool {
+    matches!(
+        params.split(|byte| *byte == b';').next(),
+        Some(b"14" | b"15" | b"16" | b"18" | b"19" | b"20" | b"21" | b"22")
+    )
 }
 
 fn discard_terminal_raw_output(app: &App) {
@@ -678,5 +808,40 @@ mod tests {
 
         app.terminal_fullscreen = true;
         assert!(should_passthrough_terminal(&app));
+    }
+
+    #[test]
+    fn terminal_passthrough_filters_terminal_queries() {
+        let mut filter = TerminalPassthroughFilter::default();
+
+        assert_eq!(
+            filter.filter(b"hello\x1b[6n\x1b[?25l\x1b]10;?\x07world"),
+            b"hello\x1b[?25lworld"
+        );
+    }
+
+    #[test]
+    fn terminal_passthrough_preserves_styling_and_progress() {
+        let mut filter = TerminalPassthroughFilter::default();
+
+        assert_eq!(
+            filter.filter(b"\x1b[38;2;1;2;3m\x1b]9;4;1;50\x07text"),
+            b"\x1b[38;2;1;2;3m\x1b]9;4;1;50\x07text"
+        );
+    }
+
+    #[test]
+    fn terminal_passthrough_filters_split_queries() {
+        let mut filter = TerminalPassthroughFilter::default();
+
+        assert_eq!(filter.filter(b"before\x1b]10"), b"before");
+        assert_eq!(filter.filter(b";?\x07after"), b"after");
+    }
+
+    #[test]
+    fn terminal_passthrough_filters_st_terminated_queries() {
+        let mut filter = TerminalPassthroughFilter::default();
+
+        assert_eq!(filter.filter(b"before\x1b]10;?\x1b\\after"), b"beforeafter");
     }
 }
