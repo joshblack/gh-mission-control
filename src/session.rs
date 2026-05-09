@@ -73,11 +73,6 @@ impl CopilotSession {
             .unwrap_or(&self.id[..8])
             .to_string()
     }
-
-    /// Key used for grouping (the cwd path, shortened for display).
-    pub fn group_key(&self) -> String {
-        self.cwd.to_string_lossy().to_string()
-    }
 }
 
 // ── Conversation turns ───────────────────────────────────────────────────────
@@ -177,26 +172,6 @@ pub fn load_turns(db_path: &Path, session_id: &str) -> Vec<Turn> {
     })
     .map(|rows| rows.flatten().collect())
     .unwrap_or_default()
-}
-
-/// Group sessions by their `cwd`, preserving newest-first order within each group.
-/// Returns `(group_key, [indices into sessions])` pairs.
-pub fn group_sessions(sessions: &[CopilotSession]) -> Vec<(String, Vec<usize>)> {
-    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-    let mut group_index: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-
-    for (i, session) in sessions.iter().enumerate() {
-        let key = session.group_key();
-        if let Some(&gi) = group_index.get(&key) {
-            groups[gi].1.push(i);
-        } else {
-            let gi = groups.len();
-            group_index.insert(key.clone(), gi);
-            groups.push((key, vec![i]));
-        }
-    }
-    groups
 }
 
 // ── Copilot binary ────────────────────────────────────────────────────────────

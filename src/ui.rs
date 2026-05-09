@@ -1,4 +1,4 @@
-use crate::app::{App, FlatItem, Mode, Panel};
+use crate::app::{App, Mode, Panel};
 use crate::session::{load_turns, session_db_path, CopilotSession, SessionStatus};
 use chrono::{DateTime, Utc};
 use ratatui::{
@@ -17,12 +17,10 @@ const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
-const GROUP_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
-const SURFACE_COLOR: Color = Color::Rgb(0x24, 0x28, 0x3b);
+const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const MUTED_COLOR: Color = IDLE_COLOR;
-const LOAD_MORE_COLOR: Color = WAITING_COLOR;
 const USER_MSG_COLOR: Color = ACCENT_COLOR;
 const AGENT_MSG_COLOR: Color = TEXT_COLOR;
 /// Maximum lines shown per assistant response before truncating.
@@ -88,13 +86,8 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(MUTED_COLOR)
     };
 
-    let title = if let Some(group) = app.focused_group.as_deref() {
-        format!(" Sessions — {} ", short_path(group))
-    } else {
-        " Sessions ".to_string()
-    };
     let block = Block::default()
-        .title(title)
+        .title(" Sessions ")
         .title_style(
             Style::default()
                 .fg(ACCENT_COLOR)
@@ -129,95 +122,43 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut items: Vec<ListItem> = Vec::new();
     let mut list_state = ListState::default();
-    let mut list_idx = 0usize;
     let now = Utc::now();
 
-    for (flat_idx, item) in app.flat_list.iter().enumerate() {
-        match item {
-            FlatItem::GroupHeader(path) => {
-                let label = short_path(path);
-                let is_cursor = app.cursor == flat_idx;
-                let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused {
-                    "▌ "
-                } else {
-                    "  "
-                };
-                let focus_suffix = if is_focused_group { "  focused" } else { "" };
-                let style = Style::default()
-                    .fg(GROUP_COLOR)
-                    .add_modifier(Modifier::BOLD);
-                items.push(ListItem::new(Line::from(vec![
-                    active_prefix(prefix, is_cursor && is_focused),
-                    Span::styled(label, style),
-                    Span::styled(focus_suffix, Style::default().fg(MUTED_COLOR)),
-                ])));
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
-            FlatItem::SessionEntry(idx) => {
-                let session = &app.sessions[*idx];
-                let is_cursor = app.cursor == flat_idx;
-                let is_selected = app.selected_session == Some(*idx);
+    for (flat_idx, idx) in app.flat_list.iter().enumerate() {
+        let session = &app.sessions[*idx];
+        let is_cursor = app.cursor == flat_idx;
+        let is_selected = app.selected_session == Some(*idx);
 
-                let name_style = if (is_cursor && is_focused) || is_selected {
-                    Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(TEXT_COLOR)
-                };
+        let name_style = if (is_cursor && is_focused) || is_selected {
+            Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT_COLOR)
+        };
 
-                let prefix = if is_cursor && is_focused {
-                    "▌ "
-                } else {
-                    "  "
-                };
-                items.push(ListItem::new(Text::from(vec![
-                    session_title_line(
-                        session,
-                        inner.width as usize,
-                        prefix,
-                        is_cursor && is_focused,
-                        name_style,
-                        now,
-                    ),
-                    session_description_line(
-                        session,
-                        inner.width as usize,
-                        prefix,
-                        is_cursor && is_focused,
-                    ),
-                ])));
+        let prefix = if is_cursor && is_focused {
+            "▌ "
+        } else {
+            "  "
+        };
+        items.push(ListItem::new(Text::from(vec![
+            session_title_line(
+                session,
+                inner.width as usize,
+                prefix,
+                is_cursor && is_focused,
+                name_style,
+                now,
+            ),
+            session_description_line(
+                session,
+                inner.width as usize,
+                prefix,
+                is_cursor && is_focused,
+            ),
+        ])));
 
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
-            FlatItem::LoadMore { hidden_count, .. } => {
-                let is_cursor = app.cursor == flat_idx;
-                let prefix = if is_cursor && is_focused {
-                    "▌ "
-                } else {
-                    "  "
-                };
-                let style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(LOAD_MORE_COLOR)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(LOAD_MORE_COLOR)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    active_prefix(prefix, is_cursor && is_focused),
-                    Span::styled(format!("… {hidden_count} more  [Enter to expand]"), style),
-                ])));
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
+        if is_cursor {
+            list_state.select(Some(flat_idx));
         }
     }
 
@@ -248,7 +189,7 @@ fn session_title_line(
     name_style: Style,
     now: DateTime<Utc>,
 ) -> Line<'static> {
-    let time = relative_minutes(session, now);
+    let time = relative_time(session, now);
     let fixed_width = prefix.chars().count() + time.chars().count() + 1;
     let title_width = width.saturating_sub(fixed_width).max(1);
     let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
@@ -284,9 +225,38 @@ fn session_description_line(
     ])
 }
 
-fn relative_minutes(session: &CopilotSession, now: DateTime<Utc>) -> String {
-    let minutes = (now - session.updated_at).num_minutes().max(0);
-    format!("{minutes}m")
+fn relative_time(session: &CopilotSession, now: DateTime<Utc>) -> String {
+    let seconds = (now - session.updated_at).num_seconds().max(0);
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h");
+    }
+
+    let days = hours / 24;
+    if days < 7 {
+        return format!("{days}d");
+    }
+
+    let weeks = days / 7;
+    if weeks < 5 {
+        return format!("{weeks}w");
+    }
+
+    let months = days / 30;
+    if months < 12 {
+        return format!("{months}mo");
+    }
+
+    format!("{}y", days / 365)
 }
 
 fn single_line(value: &str) -> String {
@@ -363,7 +333,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(1)])
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
         .split(inner);
 
     // Info card
@@ -375,6 +345,13 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(
                 session.display_name(),
                 Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Directory: ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(
+                short_path(&session.cwd.to_string_lossy()),
+                Style::default().fg(TEXT_COLOR),
             ),
         ]),
         Line::from(vec![
@@ -619,10 +596,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Mode::Normal => {
             let t = match app.active_panel {
                 Panel::Sessions => {
-                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
+                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View: Enter  Open: o  New: n  Reload: r  Quit: q"
                 }
                 Panel::Detail => {
-                    "Scroll: j/k  Back: Esc/h  Focus dir: f  Open: o  New: n  Reload: r  Quit: q"
+                    "Scroll: j/k  Back: Esc/h  Open: o  New: n  Reload: r  Quit: q"
                 }
             };
             (t, Style::default().fg(MUTED_COLOR))
