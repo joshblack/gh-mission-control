@@ -18,10 +18,48 @@ pub enum Mode {
     Normal,
     /// User is typing a directory path for a new copilot session.
     NewSessionDir,
+    /// User is typing text to filter sessions by directory.
+    DirectoryFilter,
     /// An embedded copilot session is live in the right panel.
     Terminal,
     /// Shortcut help popup is open.
     Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SessionFilter {
+    All,
+    Running,
+    Pending,
+    Remote,
+}
+
+impl SessionFilter {
+    fn next(self) -> Self {
+        match self {
+            SessionFilter::All => SessionFilter::Running,
+            SessionFilter::Running => SessionFilter::Pending,
+            SessionFilter::Pending => SessionFilter::Remote,
+            SessionFilter::Remote => SessionFilter::All,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            SessionFilter::All => SessionFilter::Remote,
+            SessionFilter::Running => SessionFilter::All,
+            SessionFilter::Pending => SessionFilter::Running,
+            SessionFilter::Remote => SessionFilter::Pending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SessionFilterCounts {
+    pub all: usize,
+    pub running: usize,
+    pub pending: usize,
+    pub remote: usize,
 }
 
 /// Actions that require access to the terminal size (only available in the
@@ -57,6 +95,8 @@ pub struct App {
     pub launch_dir: PathBuf,
     pub mode: Mode,
     pub input_buffer: String,
+    pub session_filter: SessionFilter,
+    pub directory_filter: String,
     pub detail_scroll: usize,
     pub help_scroll: usize,
     pub should_quit: bool,
@@ -74,7 +114,7 @@ pub struct App {
 impl App {
     pub fn new(copilot_dir: PathBuf, launch_dir: PathBuf) -> Self {
         let sessions = load_sessions(&copilot_dir);
-        let flat_list = build_flat_list(&sessions);
+        let flat_list = build_flat_list(&sessions, SessionFilter::All, "");
 
         let selected_session = flat_list.first().copied();
         let cursor = 0;
@@ -89,6 +129,8 @@ impl App {
             launch_dir,
             mode: Mode::Normal,
             input_buffer: String::new(),
+            session_filter: SessionFilter::All,
+            directory_filter: String::new(),
             detail_scroll: 0,
             help_scroll: 0,
             should_quit: false,
@@ -135,7 +177,7 @@ impl App {
             .collect();
         self.notified_waiting_sessions
             .retain(|id| session_ids.contains(id.as_str()));
-        self.flat_list = build_flat_list(&self.sessions);
+        self.flat_list = build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
 
         if let Some(id) = cursor_id {
             if let Some(pos) = self
@@ -257,6 +299,37 @@ impl App {
         self.help_scroll += DETAIL_PAGE_SCROLL_AMOUNT;
     }
 
+    pub fn next_session_filter(&mut self) {
+        self.session_filter = self.session_filter.next();
+        self.apply_session_filters();
+    }
+
+    pub fn previous_session_filter(&mut self) {
+        self.session_filter = self.session_filter.previous();
+        self.apply_session_filters();
+    }
+
+    pub fn begin_directory_filter(&mut self) {
+        self.mode = Mode::DirectoryFilter;
+        self.input_buffer = self.directory_filter.clone();
+    }
+
+    pub fn confirm_directory_filter(&mut self) {
+        self.directory_filter = self.input_buffer.trim().to_string();
+        self.input_buffer.clear();
+        self.mode = Mode::Normal;
+        self.apply_session_filters();
+    }
+
+    pub fn clear_directory_filter(&mut self) {
+        self.directory_filter.clear();
+        self.apply_session_filters();
+    }
+
+    pub fn session_filter_counts(&self) -> SessionFilterCounts {
+        count_session_filters(&self.sessions, &self.directory_filter)
+    }
+
     // ── Session actions ───────────────────────────────────────────────────────
 
     /// Open the prompt to launch a new copilot session.
@@ -343,18 +416,183 @@ impl App {
         if let Some(idx) = self.session_at_cursor() {
             self.selected_session = Some(idx);
             self.detail_scroll = 0;
+        } else {
+            self.selected_session = None;
         }
+    }
+
+    fn apply_session_filters(&mut self) {
+        let selected_id = self.selected_session.map(|idx| self.sessions[idx].id.clone());
+        self.flat_list = build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
+
+        self.cursor = selected_id
+            .and_then(|id| {
+                self.flat_list
+                    .iter()
+                    .position(|idx| self.sessions[*idx].id == id)
+            })
+            .unwrap_or(0);
+        if self.cursor >= self.flat_list.len() {
+            self.cursor = self.flat_list.len().saturating_sub(1);
+        }
+        self.selected_session = self.session_at_cursor();
+        self.detail_scroll = 0;
     }
 }
 
 // ── Build flat list ───────────────────────────────────────────────────────────
 
-fn build_flat_list(sessions: &[CopilotSession]) -> Vec<usize> {
+fn build_flat_list(
+    sessions: &[CopilotSession],
+    session_filter: SessionFilter,
+    directory_filter: &str,
+) -> Vec<usize> {
     let mut flat = Vec::new();
 
     for idx in 0..sessions.len() {
-        flat.push(idx);
+        let session = &sessions[idx];
+        if matches_directory_filter(session, directory_filter)
+            && matches_session_filter(session, session_filter)
+        {
+            flat.push(idx);
+        }
     }
 
     flat
+}
+
+fn count_session_filters(sessions: &[CopilotSession], directory_filter: &str) -> SessionFilterCounts {
+    sessions
+        .iter()
+        .filter(|session| matches_directory_filter(session, directory_filter))
+        .fold(SessionFilterCounts::default(), |mut counts, session| {
+            counts.all += 1;
+            match &session.status {
+                SessionStatus::Running => counts.running += 1,
+                SessionStatus::Waiting => counts.pending += 1,
+                _ => {}
+            }
+            if is_remote_session(session) {
+                counts.remote += 1;
+            }
+            counts
+        })
+}
+
+fn matches_session_filter(session: &CopilotSession, session_filter: SessionFilter) -> bool {
+    match session_filter {
+        SessionFilter::All => true,
+        SessionFilter::Running => session.status == SessionStatus::Running,
+        SessionFilter::Pending => session.status == SessionStatus::Waiting,
+        SessionFilter::Remote => is_remote_session(session),
+    }
+}
+
+fn matches_directory_filter(session: &CopilotSession, directory_filter: &str) -> bool {
+    let filter = directory_filter.trim().to_ascii_lowercase();
+    filter.is_empty()
+        || session
+            .cwd
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains(&filter)
+}
+
+fn is_remote_session(session: &CopilotSession) -> bool {
+    session.repository.is_some() && session.git_root.is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn session(
+        id: &str,
+        cwd: &str,
+        status: SessionStatus,
+        git_root: Option<&str>,
+        repository: Option<&str>,
+    ) -> CopilotSession {
+        CopilotSession {
+            id: id.to_string(),
+            cwd: PathBuf::from(cwd),
+            git_root: git_root.map(PathBuf::from),
+            repository: repository.map(ToString::to_string),
+            branch: None,
+            summary: None,
+            last_agent_message: None,
+            user_named: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status,
+        }
+    }
+
+    #[test]
+    fn filters_sessions_by_status_and_directory() {
+        let sessions = vec![
+            session(
+                "running",
+                "/work/alpha",
+                SessionStatus::Running,
+                Some("/work/alpha"),
+                Some("owner/alpha"),
+            ),
+            session(
+                "pending",
+                "/work/beta",
+                SessionStatus::Waiting,
+                Some("/work/beta"),
+                Some("owner/beta"),
+            ),
+            session(
+                "remote",
+                "/remote/alpha",
+                SessionStatus::Idle,
+                None,
+                Some("owner/remote"),
+            ),
+        ];
+
+        assert_eq!(
+            build_flat_list(&sessions, SessionFilter::Running, "alpha"),
+            vec![0]
+        );
+        assert_eq!(
+            build_flat_list(&sessions, SessionFilter::Pending, ""),
+            vec![1]
+        );
+        assert_eq!(
+            build_flat_list(&sessions, SessionFilter::Remote, "alpha"),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn counts_filters_after_directory_filter() {
+        let sessions = vec![
+            session("running", "/work/alpha", SessionStatus::Running, None, None),
+            session("pending", "/work/alpha", SessionStatus::Waiting, None, None),
+            session(
+                "remote",
+                "/remote/beta",
+                SessionStatus::Idle,
+                None,
+                Some("owner/beta"),
+            ),
+        ];
+
+        let counts = count_session_filters(&sessions, "alpha");
+
+        assert_eq!(
+            counts,
+            SessionFilterCounts {
+                all: 2,
+                running: 1,
+                pending: 1,
+                remote: 0,
+            }
+        );
+    }
 }
