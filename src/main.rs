@@ -163,10 +163,14 @@ where
                         }) {
                         Ok(tmux_session) => {
                             let new_session_id = app.reload_if_new_session_created();
-                            let tmux_rename_error = new_session_id
-                                .as_deref()
-                                .and_then(|id| reuse_tmux_session(&tmux_session, id).err());
-                            app.clear_new_session_reload_watch();
+                            let tmux_rename_error = if let Some(id) = new_session_id.as_deref() {
+                                let error = reuse_tmux_session(&tmux_session, id).err();
+                                app.clear_new_session_reload_watch();
+                                error
+                            } else {
+                                app.set_new_session_tmux_session(tmux_session);
+                                None
+                            };
                             last_new_session_reload_check = None;
                             app.mode = Mode::Normal;
                             app.terminal_fullscreen = false;
@@ -176,7 +180,7 @@ where
                                     format!("New session loaded; tmux reuse failed: {e}")
                                 }
                                 (Some(_), None) => "New session loaded".into(),
-                                (None, _) => "Returned from native terminal".into(),
+                                (None, _) => "Returned; waiting for new session".into(),
                             });
                         }
                         Err(e) => {
@@ -231,10 +235,13 @@ where
         if should_check_for_new_session {
             last_new_session_reload_check = Some(Instant::now());
             if let Some(new_session_id) = app.reload_if_new_session_created() {
-                let reuse_error = app
-                    .embedded_terminal
-                    .as_mut()
-                    .and_then(|term| term.reuse_as_session(&new_session_id).err());
+                let reuse_error = if let Some(term) = app.embedded_terminal.as_mut() {
+                    term.reuse_as_session(&new_session_id).err()
+                } else if let Some(tmux_session) = app.take_new_session_tmux_session() {
+                    reuse_tmux_session(&tmux_session, &new_session_id).err()
+                } else {
+                    None
+                };
                 last_new_session_reload_check = None;
                 app.status_message = Some(match reuse_error {
                     Some(e) => format!("New session loaded; tmux reuse failed: {e}"),

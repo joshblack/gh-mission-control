@@ -131,7 +131,8 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let db_path = session_db_path(copilot_dir);
     // Keep the session list focused on recently active workspaces.
     let oldest_active = Utc::now() - Duration::days(7);
-    let active_tmux_sessions = active_tmux_session_names();
+    let active_tmux_sessions = active_tmux_sessions();
+    let active_tmux_session_names = active_tmux_sessions.keys().cloned().collect();
 
     let mut sessions = Vec::new();
 
@@ -163,8 +164,9 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
                     copilot_dir,
                     &db_path,
                     &session.id,
-                    &active_tmux_sessions,
+                    &active_tmux_session_names,
                 );
+                apply_tmux_session_metadata(&mut session, &active_tmux_sessions);
                 sessions.push(session);
             }
         }
@@ -203,7 +205,8 @@ pub fn refresh_session_statuses_with_cache(
     cache: &mut SessionStatusCache,
 ) {
     let db_path = session_db_path(copilot_dir);
-    let active_tmux_sessions = active_tmux_session_names();
+    let active_tmux_sessions = active_tmux_sessions();
+    let active_tmux_session_names = active_tmux_sessions.keys().cloned().collect();
 
     for session in sessions {
         if session.source == SessionSource::Remote {
@@ -213,10 +216,28 @@ pub fn refresh_session_statuses_with_cache(
             copilot_dir,
             &db_path,
             &session.id,
-            &active_tmux_sessions,
+            &active_tmux_session_names,
             cache,
         );
+        apply_tmux_session_metadata(session, &active_tmux_sessions);
     }
+}
+
+fn apply_tmux_session_metadata(
+    session: &mut CopilotSession,
+    active_tmux_sessions: &HashMap<String, ActiveTmuxSession>,
+) {
+    let Some(tmux_session) = active_tmux_sessions.get(&tmux_session_name(&session.id)) else {
+        return;
+    };
+    let Some(title) = tmux_session.title.as_ref() else {
+        return;
+    };
+
+    if session.summary.is_none() {
+        session.summary = Some(title.clone());
+    }
+    session.last_agent_message = Some(title.clone());
 }
 
 fn load_remote_agent_tasks() -> Vec<CopilotSession> {
@@ -889,26 +910,49 @@ fn response_indicates_error(response: &str) -> bool {
     .any(|needle| response.contains(needle))
 }
 
-fn active_tmux_session_names() -> HashSet<String> {
+#[derive(Debug, Clone)]
+struct ActiveTmuxSession {
+    title: Option<String>,
+}
+
+fn active_tmux_sessions() -> HashMap<String, ActiveTmuxSession> {
     let output = Command::new("tmux")
         .arg("list-sessions")
         .arg("-F")
-        .arg("#{session_name}")
+        .arg("#{session_name}\t#{pane_title}")
         .stderr(Stdio::null())
         .output();
 
     let Ok(output) = output else {
-        return HashSet::new();
+        return HashMap::new();
     };
     if !output.status.success() {
-        return HashSet::new();
+        return HashMap::new();
     }
 
-    String::from_utf8_lossy(&output.stdout)
+    parse_active_tmux_sessions(&output.stdout)
+}
+
+fn parse_active_tmux_sessions(output: &[u8]) -> HashMap<String, ActiveTmuxSession> {
+    String::from_utf8_lossy(output)
         .lines()
-        .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
-        .map(ToString::to_string)
+        .filter_map(|line| {
+            let (name, title) = line.split_once('\t').unwrap_or((line, ""));
+            name.starts_with(TMUX_SESSION_PREFIX).then(|| {
+                (
+                    name.to_string(),
+                    ActiveTmuxSession {
+                        title: tmux_title_from_str(title),
+                    },
+                )
+            })
+        })
         .collect()
+}
+
+fn tmux_title_from_str(title: &str) -> Option<String> {
+    let title = title.trim();
+    (!title.is_empty()).then(|| title.to_string())
 }
 
 #[cfg(test)]
@@ -1047,6 +1091,28 @@ mod tests {
 
         assert_eq!(sanitized, "start[31m red text\nnext\tline");
         assert!(!sanitized.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn parse_active_tmux_sessions_keeps_prefixed_sessions_with_titles() {
+        let output =
+            b"ghpilot_session-1\tUpdated description\nother\tIgnored\nghpilot_session-2\t \n";
+
+        let sessions = parse_active_tmux_sessions(output);
+
+        assert_eq!(
+            sessions
+                .get("ghpilot_session-1")
+                .and_then(|session| session.title.as_deref()),
+            Some("Updated description")
+        );
+        assert_eq!(
+            sessions
+                .get("ghpilot_session-2")
+                .and_then(|session| session.title.as_deref()),
+            None
+        );
+        assert!(!sessions.contains_key("other"));
     }
 
     #[test]

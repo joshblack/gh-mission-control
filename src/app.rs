@@ -123,6 +123,8 @@ pub struct App {
     pub pending_action: PendingAction,
     /// Session IDs present before launching a new Copilot session.
     pub new_session_reload_baseline: Option<HashSet<String>>,
+    /// Temporary tmux session to rename once a detached new session writes its real id.
+    pub new_session_tmux_session: Option<String>,
     notified_waiting_sessions: HashSet<String>,
     status_cache: SessionStatusCache,
     /// A live copilot session embedded in the right panel, if any.
@@ -171,6 +173,7 @@ impl App {
             status_message: None,
             pending_action: PendingAction::None,
             new_session_reload_baseline: None,
+            new_session_tmux_session: None,
             notified_waiting_sessions: HashSet::new(),
             status_cache: SessionStatusCache::default(),
             embedded_terminal: None,
@@ -290,10 +293,12 @@ impl App {
                 .map(|session| session.id.clone())
                 .collect(),
         );
+        self.new_session_tmux_session = None;
     }
 
     pub fn clear_new_session_reload_watch(&mut self) {
         self.new_session_reload_baseline = None;
+        self.new_session_tmux_session = None;
     }
 
     pub fn has_new_session_reload_watch(&self) -> bool {
@@ -314,6 +319,14 @@ impl App {
         self.replace_sessions(sessions);
         self.sessions_loading = false;
         Some(new_session_id)
+    }
+
+    pub fn set_new_session_tmux_session(&mut self, tmux_session: String) {
+        self.new_session_tmux_session = Some(tmux_session);
+    }
+
+    pub fn take_new_session_tmux_session(&mut self) -> Option<String> {
+        self.new_session_tmux_session.take()
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -924,6 +937,7 @@ mod tests {
             status_message: None,
             pending_action: PendingAction::None,
             new_session_reload_baseline: None,
+            new_session_tmux_session: None,
             notified_waiting_sessions: HashSet::new(),
             status_cache: SessionStatusCache::default(),
             embedded_terminal: None,
@@ -1174,6 +1188,20 @@ mod tests {
             Some(Path::new("/work/project"))
         );
         assert!(app.status_message.is_some());
+    }
+
+    #[test]
+    fn new_session_tmux_session_can_wait_for_late_session_id() {
+        let mut app = app_with_sessions(vec![]);
+
+        app.capture_new_session_reload_baseline();
+        app.set_new_session_tmux_session("ghpilot_new_123".to_string());
+
+        assert!(app.has_new_session_reload_watch());
+        assert_eq!(
+            app.take_new_session_tmux_session().as_deref(),
+            Some("ghpilot_new_123")
+        );
     }
 
     #[test]
