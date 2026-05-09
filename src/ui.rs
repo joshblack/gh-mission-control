@@ -67,6 +67,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             f,
             " New Copilot Session — Directory (Enter to confirm, Esc to cancel) ",
             &app.input_buffer,
+            &app.directory_suggestions(),
+            app.directory_suggestion_cursor(),
             area,
         );
     }
@@ -75,6 +77,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             f,
             " Filter Sessions — Directory (Enter to apply, Esc to cancel) ",
             &app.input_buffer,
+            &app.directory_suggestions(),
+            app.directory_suggestion_cursor(),
             area,
         );
     }
@@ -1030,11 +1034,11 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
-            "Launch: Enter  Cancel: Esc".to_string(),
+            "Launch: Enter  Suggestions: ↑/↓  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::DirectoryFilter => (
-            "Apply: Enter  Clear input: Ctrl+U  Cancel: Esc".to_string(),
+            "Apply: Enter  Suggestions: ↑/↓  Clear input: Ctrl+U  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::Terminal => (
@@ -1090,8 +1094,18 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
 
-fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
-    let popup = centered_rect(70, 5, area);
+fn draw_input_popup(
+    f: &mut Frame,
+    title: &str,
+    input: &str,
+    suggestions: &[String],
+    selected_suggestion: Option<usize>,
+    area: Rect,
+) {
+    let max_suggestions = 5;
+    let visible_suggestions = suggestions.len().min(max_suggestions);
+    let popup_height = (4 + visible_suggestions as u16).max(5);
+    let popup = centered_rect(70, popup_height, area);
     f.render_widget(Clear, popup);
     let block = Block::default()
         .title(title)
@@ -1105,12 +1119,50 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
         .border_style(Style::default().fg(ACCENT_COLOR));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
+    let mut lines = vec![Line::from(Span::styled(
+        format!("▶ {input}█"),
+        Style::default().fg(TEXT_COLOR),
+    ))];
+
+    if visible_suggestions > 0 {
+        lines.push(Line::from(Span::styled(
+            "Suggestions",
+            Style::default()
+                .fg(MUTED_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        let start = selected_suggestion
+            .map(|index| index.saturating_add(1).saturating_sub(max_suggestions))
+            .unwrap_or(0);
+        for (index, suggestion) in suggestions
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_suggestions)
+        {
+            let selected = selected_suggestion == Some(index);
+            let marker = if selected { "›" } else { " " };
+            let style = if selected {
+                Style::default()
+                    .fg(BACKGROUND_COLOR)
+                    .bg(ACCENT_COLOR)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TEXT_COLOR)
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    " {marker} {}",
+                    truncate_ellipsis(suggestion, (inner.width as usize).saturating_sub(4))
+                ),
+                style,
+            )));
+        }
+    }
+
     f.render_widget(
-        Paragraph::new(Span::styled(
-            format!("▶ {input}█"),
-            Style::default().fg(TEXT_COLOR),
-        ))
-        .style(Style::default().bg(SURFACE_COLOR)),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(SURFACE_COLOR)),
         inner,
     );
 }
@@ -1190,8 +1242,17 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::from(""),
         help_heading("New session prompt"),
         help_shortcut("Enter", "Launch in the entered directory"),
+        help_shortcut("↑ / ↓", "Choose a directory suggestion"),
+        help_shortcut("Ctrl+U", "Clear input"),
         help_shortcut("Esc", "Cancel"),
         help_shortcut("Type", "Edit the directory path"),
+        Line::from(""),
+        help_heading("Directory filter prompt"),
+        help_shortcut("Enter", "Apply the directory filter"),
+        help_shortcut("↑ / ↓", "Choose a directory suggestion"),
+        help_shortcut("Ctrl+U", "Clear input"),
+        help_shortcut("Esc", "Cancel"),
+        help_shortcut("Type", "Edit the directory filter"),
         Line::from(""),
         help_heading("Shortcut help"),
         help_shortcut("j / ↓ / scroll", "Scroll down"),

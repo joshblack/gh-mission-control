@@ -105,6 +105,8 @@ pub struct App {
     pub input_buffer: String,
     pub session_filter: SessionFilter,
     pub directory_filter: String,
+    directory_filter_history: Vec<String>,
+    directory_suggestion_cursor: Option<usize>,
     pub detail_scroll: usize,
     pub help_scroll: usize,
     pub should_quit: bool,
@@ -147,6 +149,8 @@ impl App {
             input_buffer: String::new(),
             session_filter: SessionFilter::All,
             directory_filter: String::new(),
+            directory_filter_history: Vec::new(),
+            directory_suggestion_cursor: None,
             detail_scroll: 0,
             help_scroll: 0,
             should_quit: false,
@@ -351,11 +355,15 @@ impl App {
     pub fn begin_directory_filter(&mut self) {
         self.mode = Mode::DirectoryFilter;
         self.input_buffer = self.directory_filter.clone();
+        self.sync_directory_suggestion_cursor();
     }
 
     pub fn confirm_directory_filter(&mut self) {
-        self.directory_filter = self.input_buffer.trim().to_string();
+        let directory_filter = self.input_buffer.trim().to_string();
+        self.remember_directory_filter(&directory_filter);
+        self.directory_filter = directory_filter;
         self.input_buffer.clear();
+        self.directory_suggestion_cursor = None;
         self.mode = Mode::Normal;
         self.apply_session_filters();
     }
@@ -374,7 +382,8 @@ impl App {
     /// Open the prompt to launch a new copilot session.
     pub fn begin_new_session(&mut self) {
         self.mode = Mode::NewSessionDir;
-        self.input_buffer = self.default_new_session_dir().to_string_lossy().to_string();
+        self.input_buffer = self.default_new_session_dir();
+        self.sync_directory_suggestion_cursor();
     }
 
     /// Confirm the new session directory prompt and queue a launch.
@@ -392,6 +401,7 @@ impl App {
             PathBuf::from(&raw)
         };
         self.input_buffer.clear();
+        self.directory_suggestion_cursor = None;
         self.mode = Mode::Normal;
         self.pending_action = PendingAction::LaunchNew { dir };
     }
@@ -399,6 +409,50 @@ impl App {
     pub fn cancel_input(&mut self) {
         self.mode = Mode::Normal;
         self.input_buffer.clear();
+        self.directory_suggestion_cursor = None;
+    }
+
+    pub fn select_next_directory_suggestion(&mut self) {
+        self.select_directory_suggestion(false);
+    }
+
+    pub fn select_previous_directory_suggestion(&mut self) {
+        self.select_directory_suggestion(true);
+    }
+
+    pub fn sync_directory_suggestion_cursor(&mut self) {
+        let current = self.input_buffer.trim();
+        self.directory_suggestion_cursor = self
+            .directory_suggestions()
+            .iter()
+            .position(|suggestion| suggestion == current);
+    }
+
+    fn select_directory_suggestion(&mut self, reverse: bool) {
+        let suggestions = self.directory_suggestions();
+        if suggestions.is_empty() {
+            return;
+        }
+
+        let current_index = self
+            .directory_suggestion_cursor
+            .filter(|index| *index < suggestions.len())
+            .or_else(|| {
+                let current = self.input_buffer.trim();
+                suggestions
+                    .iter()
+                    .position(|suggestion| suggestion == current)
+            });
+        let next_index = match current_index {
+            Some(0) if reverse => suggestions.len() - 1,
+            Some(index) if reverse => index - 1,
+            Some(index) => (index + 1) % suggestions.len(),
+            None if reverse => suggestions.len() - 1,
+            None => 0,
+        };
+
+        self.input_buffer = suggestions[next_index].clone();
+        self.directory_suggestion_cursor = Some(next_index);
     }
 
     /// Queue opening an embedded terminal for the session under the cursor.
@@ -474,11 +528,55 @@ impl App {
         self.flat_list.get(self.cursor).copied()
     }
 
-    fn default_new_session_dir(&self) -> PathBuf {
+    fn default_new_session_dir(&self) -> String {
+        let directory_filter = self.directory_filter.trim();
+        if !directory_filter.is_empty() {
+            return directory_filter.to_string();
+        }
+
         self.session_at_cursor()
             .or(self.selected_session)
-            .map(|idx| self.sessions[idx].cwd.clone())
-            .unwrap_or_else(|| self.launch_dir.clone())
+            .map(|idx| self.sessions[idx].cwd.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.launch_dir.to_string_lossy().to_string())
+    }
+
+    fn remember_directory_filter(&mut self, directory_filter: &str) {
+        let directory_filter = directory_filter.trim();
+        if directory_filter.is_empty() {
+            return;
+        }
+
+        self.directory_filter_history
+            .retain(|entry| entry != directory_filter);
+        self.directory_filter_history
+            .insert(0, directory_filter.to_string());
+        self.directory_filter_history.truncate(20);
+    }
+
+    pub fn directory_suggestions(&self) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        push_unique_directory_suggestion(&mut suggestions, self.directory_filter.trim());
+
+        for entry in &self.directory_filter_history {
+            push_unique_directory_suggestion(&mut suggestions, entry);
+        }
+
+        let mut local_sessions: Vec<_> = self
+            .sessions
+            .iter()
+            .filter(|session| session.source == SessionSource::Local)
+            .collect();
+        local_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        for session in local_sessions {
+            push_unique_directory_suggestion(&mut suggestions, &session.cwd.to_string_lossy());
+        }
+
+        suggestions
+    }
+
+    pub fn directory_suggestion_cursor(&self) -> Option<usize> {
+        self.directory_suggestion_cursor
+            .filter(|index| *index < self.directory_suggestions().len())
     }
 
     fn take_waiting_notification(&mut self) -> bool {
@@ -657,6 +755,13 @@ fn is_remote_session(session: &CopilotSession) -> bool {
     session.source == SessionSource::Remote
 }
 
+fn push_unique_directory_suggestion(suggestions: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() && !suggestions.iter().any(|suggestion| suggestion == value) {
+        suggestions.push(value.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,6 +783,8 @@ mod tests {
             input_buffer: String::new(),
             session_filter: SessionFilter::All,
             directory_filter: String::new(),
+            directory_filter_history: Vec::new(),
+            directory_suggestion_cursor: None,
             detail_scroll: 0,
             help_scroll: 0,
             should_quit: false,
@@ -864,6 +971,93 @@ mod tests {
         )];
 
         assert!(build_flat_list(&sessions, SessionFilter::Remote, "/tmp/react/src").is_empty());
+    }
+
+    #[test]
+    fn new_session_defaults_to_active_directory_filter() {
+        let mut app = app_with_sessions(vec![session_with_details(
+            "local",
+            SessionSource::Local,
+            "/work/selected",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
+        app.directory_filter = "/work/filtered".to_string();
+
+        app.begin_new_session();
+
+        assert_eq!(app.input_buffer, "/work/filtered");
+    }
+
+    #[test]
+    fn directory_suggestions_are_sorted_by_mru() {
+        let mut app = app_with_sessions(vec![
+            session_with_details(
+                "older-local",
+                SessionSource::Local,
+                "/work/older-session",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+            session_with_details(
+                "recent-local",
+                SessionSource::Local,
+                "/work/recent-session",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+            session_with_details(
+                "remote",
+                SessionSource::Remote,
+                "owner/repo",
+                SessionStatus::Idle,
+                None,
+                Some("owner/repo"),
+            ),
+        ]);
+        app.sessions[0].updated_at = Utc::now() - chrono::Duration::minutes(10);
+        app.sessions[1].updated_at = Utc::now();
+
+        app.input_buffer = "/work/older-filter".to_string();
+        app.confirm_directory_filter();
+        app.input_buffer = "/work/recent-filter".to_string();
+        app.confirm_directory_filter();
+
+        assert_eq!(
+            app.directory_suggestions(),
+            vec![
+                "/work/recent-filter",
+                "/work/older-filter",
+                "/work/recent-session",
+                "/work/older-session"
+            ]
+        );
+    }
+
+    #[test]
+    fn directory_suggestions_can_be_selected() {
+        let mut app = app_with_sessions(vec![session_with_details(
+            "local",
+            SessionSource::Local,
+            "/work/session",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
+        app.input_buffer = "/work/filtered".to_string();
+        app.confirm_directory_filter();
+        app.input_buffer.clear();
+
+        app.select_next_directory_suggestion();
+        assert_eq!(app.input_buffer, "/work/filtered");
+        assert_eq!(app.directory_suggestion_cursor(), Some(0));
+
+        app.select_next_directory_suggestion();
+        assert_eq!(app.input_buffer, "/work/session");
+        assert_eq!(app.directory_suggestion_cursor(), Some(1));
     }
 
     #[test]
