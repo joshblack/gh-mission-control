@@ -21,15 +21,11 @@ const REMOTE_COLOR: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
 const TERMINAL_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
-const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
+const TEXT_COLOR: Color = IDLE_COLOR;
+const SECTION_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const MUTED_COLOR: Color = IDLE_COLOR;
-const USER_MSG_COLOR: Color = ACCENT_COLOR;
-const AGENT_MSG_COLOR: Color = TEXT_COLOR;
-const MARKDOWN_TEXT_COLOR: Color = TEXT_COLOR;
-const MARKDOWN_HEADING_COLOR: Color = ACCENT_COLOR;
-const MARKDOWN_MARKER_COLOR: Color = WAITING_COLOR;
-const MARKDOWN_CODE_COLOR: Color = RUNNING_COLOR;
-const MAX_LIST_MARKER_DIGITS: usize = 9;
+const USER_MSG_COLOR: Color = SECTION_COLOR;
+const AGENT_MSG_COLOR: Color = SECTION_COLOR;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
 /// Maximum lines shown for remote task log previews before truncating.
@@ -128,7 +124,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .title(title)
         .title_style(
             Style::default()
-                .fg(ACCENT_COLOR)
+                .fg(SECTION_COLOR)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
@@ -153,7 +149,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             "No sessions match the current filters."
         };
         let msg = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
+            Line::from(Span::styled(title, Style::default().fg(SECTION_COLOR))),
             Line::from(Span::raw("")),
             Line::from(Span::styled(description, Style::default().fg(MUTED_COLOR))),
         ]))
@@ -266,7 +262,7 @@ fn draw_session_filter_pane(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .title(" Filters ")
-                .title_style(Style::default().fg(MUTED_COLOR))
+                .title_style(Style::default().fg(SECTION_COLOR))
                 .borders(Borders::ALL)
                 .style(Style::default().bg(SURFACE_COLOR))
                 .border_style(Style::default().fg(MUTED_COLOR)),
@@ -442,7 +438,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             )
         };
         let msg = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
+            Line::from(Span::styled(title, Style::default().fg(SECTION_COLOR))),
             Line::from(Span::raw("")),
             Line::from(Span::styled(description, Style::default().fg(MUTED_COLOR))),
         ]))
@@ -469,21 +465,21 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut info_lines = vec![
         Line::from(vec![
-            Span::styled("  Title:     ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Title:     ", Style::default().fg(SECTION_COLOR)),
             Span::styled(
                 session.display_name(),
                 Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Directory: ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Directory: ", Style::default().fg(SECTION_COLOR)),
             Span::styled(
                 short_path(&session.cwd.to_string_lossy()),
                 Style::default().fg(TEXT_COLOR),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Status:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Status:    ", Style::default().fg(SECTION_COLOR)),
             Span::styled(
                 format!("{status_sym} {}", session.status.label()),
                 Style::default()
@@ -495,13 +491,13 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     if let Some(ref repo) = session.repository {
         info_lines.push(Line::from(vec![
-            Span::styled("  Repo:      ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Repo:      ", Style::default().fg(SECTION_COLOR)),
             Span::styled(repo.clone(), Style::default().fg(TEXT_COLOR)),
         ]));
     }
     if let Some(ref branch) = session.branch {
         info_lines.push(Line::from(vec![
-            Span::styled("  Branch:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Branch:    ", Style::default().fg(SECTION_COLOR)),
             Span::styled(branch.clone(), Style::default().fg(TEXT_COLOR)),
         ]));
     }
@@ -512,31 +508,31 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .map(|state| format!("Remote agent task ({state})"))
             .unwrap_or_else(|| "Remote agent task".to_string());
         info_lines.push(Line::from(vec![
-            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Source:    ", Style::default().fg(SECTION_COLOR)),
             Span::styled(" ", Style::default().fg(REMOTE_COLOR)),
             Span::styled(source, Style::default().fg(REMOTE_COLOR)),
         ]));
         if let Some(ref user) = session.remote_user {
             info_lines.push(Line::from(vec![
-                Span::styled("  User:      ", Style::default().fg(MUTED_COLOR)),
+                Span::styled("  User:      ", Style::default().fg(SECTION_COLOR)),
                 Span::styled(user.clone(), Style::default().fg(TEXT_COLOR)),
             ]));
         }
         if let Some(ref pull_request) = session.pull_request {
             info_lines.push(Line::from(vec![
-                Span::styled("  PR:        ", Style::default().fg(MUTED_COLOR)),
+                Span::styled("  PR:        ", Style::default().fg(SECTION_COLOR)),
                 Span::styled(pull_request.clone(), Style::default().fg(TEXT_COLOR)),
             ]));
         }
         if let Some(ref url) = session.remote_url {
             info_lines.push(Line::from(vec![
-                Span::styled("  URL:       ", Style::default().fg(MUTED_COLOR)),
+                Span::styled("  URL:       ", Style::default().fg(SECTION_COLOR)),
                 Span::styled(url.clone(), Style::default().fg(TEXT_COLOR)),
             ]));
         }
     } else {
         info_lines.push(Line::from(vec![
-            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Source:    ", Style::default().fg(SECTION_COLOR)),
             Span::styled(session_icon(session), session_icon_style(session, false)),
             Span::styled(
                 "Local terminal session",
@@ -583,12 +579,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         turn_lines.push(Line::from(Span::raw("")));
         match session.remote_log.as_deref() {
             Some(log) if !log.is_empty() => {
-                if push_markdown_lines(
-                    &mut turn_lines,
-                    log,
-                    MARKDOWN_TEXT_COLOR,
-                    Some(MAX_REMOTE_LOG_LINES),
-                ) {
+                if push_text_lines(&mut turn_lines, log, TEXT_COLOR, Some(MAX_REMOTE_LOG_LINES)) {
                     turn_lines.push(Line::from(Span::styled(
                         "  … (truncated)",
                         Style::default().fg(MUTED_COLOR),
@@ -638,7 +629,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(USER_MSG_COLOR)
                         .add_modifier(Modifier::BOLD),
                 )));
-                push_markdown_lines(&mut turn_lines, msg, MARKDOWN_TEXT_COLOR, None);
+                push_text_lines(&mut turn_lines, msg, TEXT_COLOR, None);
                 turn_lines.push(Line::from(Span::raw("")));
             }
             if let Some(ref resp) = turn.assistant_response {
@@ -648,12 +639,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(AGENT_MSG_COLOR)
                         .add_modifier(Modifier::BOLD),
                 )));
-                if push_markdown_lines(
-                    &mut turn_lines,
-                    resp,
-                    MARKDOWN_TEXT_COLOR,
-                    Some(MAX_RESPONSE_LINES),
-                ) {
+                if push_text_lines(&mut turn_lines, resp, TEXT_COLOR, Some(MAX_RESPONSE_LINES)) {
                     turn_lines.push(Line::from(Span::styled(
                         "  … (truncated)",
                         Style::default().fg(MUTED_COLOR),
@@ -685,7 +671,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .title(log_title)
-                .title_style(Style::default().fg(MUTED_COLOR))
+                .title_style(Style::default().fg(SECTION_COLOR))
                 .style(Style::default().bg(SURFACE_COLOR))
                 .borders(Borders::NONE),
         )
@@ -745,215 +731,24 @@ fn draw_new_session_loading(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn push_markdown_lines(
+fn push_text_lines(
     lines: &mut Vec<Line<'static>>,
     text: &str,
-    base_color: Color,
+    color: Color,
     max_lines: Option<usize>,
 ) -> bool {
-    let mut in_code_block = false;
     let mut truncated = false;
+    let style = Style::default().fg(color);
 
     for (index, line) in text.lines().enumerate() {
         if max_lines.is_some_and(|max| index >= max) {
             truncated = true;
             break;
         }
-        lines.push(markdown_line("  ", line, base_color, &mut in_code_block));
+        lines.push(Line::from(Span::styled(format!("  {line}"), style)));
     }
 
     truncated
-}
-
-fn markdown_line(
-    prefix: &str,
-    line: &str,
-    base_color: Color,
-    in_code_block: &mut bool,
-) -> Line<'static> {
-    let base_style = Style::default().fg(base_color);
-    let mut spans = vec![Span::styled(prefix.to_string(), base_style)];
-    let trimmed = line.trim_start();
-    let leading = line.len() - trimmed.len();
-    let leading_ws = &line[..leading];
-
-    if is_code_fence(trimmed) {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default()
-                .fg(MARKDOWN_CODE_COLOR)
-                .add_modifier(Modifier::BOLD),
-        ));
-        *in_code_block = !*in_code_block;
-        return Line::from(spans);
-    }
-
-    if *in_code_block {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default().fg(MARKDOWN_CODE_COLOR),
-        ));
-        return Line::from(spans);
-    }
-
-    if is_heading(trimmed) {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default()
-                .fg(MARKDOWN_HEADING_COLOR)
-                .add_modifier(Modifier::BOLD),
-        ));
-        return Line::from(spans);
-    }
-
-    if let Some(rest) = trimmed.strip_prefix('>') {
-        spans.push(Span::styled(leading_ws.to_string(), base_style));
-        spans.push(Span::styled(
-            ">".to_string(),
-            Style::default()
-                .fg(MARKDOWN_MARKER_COLOR)
-                .add_modifier(Modifier::BOLD),
-        ));
-        append_inline_markdown(spans, rest, base_color)
-    } else if let Some((marker, rest)) = split_list_marker(trimmed) {
-        spans.push(Span::styled(leading_ws.to_string(), base_style));
-        spans.push(Span::styled(
-            marker.to_string(),
-            Style::default()
-                .fg(MARKDOWN_MARKER_COLOR)
-                .add_modifier(Modifier::BOLD),
-        ));
-        append_inline_markdown(spans, rest, base_color)
-    } else {
-        append_inline_markdown(spans, line, base_color)
-    }
-}
-
-fn append_inline_markdown(
-    mut spans: Vec<Span<'static>>,
-    text: &str,
-    base_color: Color,
-) -> Line<'static> {
-    let mut rest = text;
-    let base_style = Style::default().fg(base_color);
-
-    while let Some(start) = rest.find('`') {
-        let (before, after_start) = rest.split_at(start);
-        if !before.is_empty() {
-            append_emphasis_markdown(&mut spans, before, base_color);
-        }
-
-        let after_tick = &after_start[1..];
-        if let Some(end) = after_tick.find('`') {
-            let (code, after_end) = after_tick.split_at(end);
-            spans.push(Span::styled(
-                format!("`{code}`"),
-                Style::default().fg(MARKDOWN_CODE_COLOR),
-            ));
-            rest = &after_end[1..];
-        } else {
-            spans.push(Span::styled(after_start.to_string(), base_style));
-            rest = "";
-        }
-    }
-
-    if !rest.is_empty() {
-        append_emphasis_markdown(&mut spans, rest, base_color);
-    }
-
-    Line::from(spans)
-}
-
-fn append_emphasis_markdown(spans: &mut Vec<Span<'static>>, text: &str, base_color: Color) {
-    let mut rest = text;
-    let base_style = Style::default().fg(base_color);
-
-    while let Some((start, marker, end)) = find_emphasis(rest) {
-        let (before, emphasized) = rest.split_at(start);
-        if !before.is_empty() {
-            spans.push(Span::styled(before.to_string(), base_style));
-        }
-
-        let token_len = marker.len();
-        let (content, after_content) = emphasized[token_len..].split_at(end);
-        let mut style = base_style;
-        if token_len >= 2 {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        if token_len == 1 || token_len == 3 {
-            style = style.add_modifier(Modifier::ITALIC);
-        }
-        spans.push(Span::styled(content.to_string(), style));
-        rest = &after_content[token_len..];
-    }
-
-    if !rest.is_empty() {
-        spans.push(Span::styled(rest.to_string(), base_style));
-    }
-}
-
-fn find_emphasis(text: &str) -> Option<(usize, &'static str, usize)> {
-    const EMPHASIS_MARKERS: [&str; 6] = ["***", "___", "**", "__", "*", "_"];
-
-    let mut index = 0;
-    while index < text.len() {
-        let rest = &text[index..];
-        for marker in EMPHASIS_MARKERS {
-            if !rest.starts_with(marker) {
-                continue;
-            }
-            let after_marker = &rest[marker.len()..];
-            if let Some(end) = after_marker.find(marker) {
-                if end > 0 {
-                    return Some((index, marker, end));
-                }
-            }
-        }
-        index += rest.chars().next().map_or(1, char::len_utf8);
-    }
-
-    None
-}
-
-fn is_code_fence(trimmed: &str) -> bool {
-    trimmed.starts_with("```") || trimmed.starts_with("~~~")
-}
-
-fn is_heading(trimmed: &str) -> bool {
-    let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
-    (1..=6).contains(&hashes)
-        && trimmed
-            .as_bytes()
-            .get(hashes)
-            .is_some_and(|byte| byte.is_ascii_whitespace())
-}
-
-fn split_list_marker(trimmed: &str) -> Option<(&str, &str)> {
-    let mut chars = trimmed.char_indices();
-    if let Some((_, marker)) = chars.next() {
-        if matches!(marker, '-' | '*' | '+') {
-            if let Some((whitespace_start, whitespace)) = chars.next() {
-                if whitespace.is_whitespace() {
-                    let rest_start = whitespace_start + whitespace.len_utf8();
-                    return Some((&trimmed[..rest_start], &trimmed[rest_start..]));
-                }
-            }
-        }
-    }
-
-    let marker_end = trimmed.find('.')?;
-    let after_dot = &trimmed[marker_end + 1..];
-    let whitespace = after_dot.chars().next()?;
-    if marker_end == 0
-        || marker_end > MAX_LIST_MARKER_DIGITS
-        || !trimmed[..marker_end].chars().all(|ch| ch.is_ascii_digit())
-        || !whitespace.is_whitespace()
-    {
-        return None;
-    }
-
-    let rest_start = marker_end + 1 + whitespace.len_utf8();
-    Some((&trimmed[..rest_start], &trimmed[rest_start..]))
 }
 
 fn status_display(status: &SessionStatus) -> (Color, &'static str) {
@@ -1175,7 +970,7 @@ fn draw_input_popup(
         .title(title)
         .title_style(
             Style::default()
-                .fg(ACCENT_COLOR)
+                .fg(SECTION_COLOR)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
@@ -1192,7 +987,7 @@ fn draw_input_popup(
         lines.push(Line::from(Span::styled(
             "Suggestions",
             Style::default()
-                .fg(MUTED_COLOR)
+                .fg(SECTION_COLOR)
                 .add_modifier(Modifier::BOLD),
         )));
 
@@ -1240,7 +1035,7 @@ fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
         .title(" Shortcuts — j/k or scroll, Esc to close ")
         .title_style(
             Style::default()
-                .fg(ACCENT_COLOR)
+                .fg(SECTION_COLOR)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
@@ -1330,14 +1125,14 @@ fn help_heading(text: &'static str) -> Line<'static> {
     Line::from(Span::styled(
         format!("  {text}"),
         Style::default()
-            .fg(ACCENT_COLOR)
+            .fg(SECTION_COLOR)
             .add_modifier(Modifier::BOLD),
     ))
 }
 
 fn help_shortcut(key: &'static str, action: &'static str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {key:<18}"), Style::default().fg(ACCENT_COLOR)),
+        Span::styled(format!("  {key:<18}"), Style::default().fg(SECTION_COLOR)),
         Span::styled(action, Style::default().fg(TEXT_COLOR)),
     ])
 }
@@ -1403,29 +1198,6 @@ fn short_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn split_list_marker_handles_ascii_markers() {
-        assert_eq!(split_list_marker("- item"), Some(("- ", "item")));
-        assert_eq!(split_list_marker("10. item"), Some(("10. ", "item")));
-    }
-
-    #[test]
-    fn split_list_marker_ignores_unicode_bullets() {
-        assert_eq!(split_list_marker("• item"), None);
-    }
-
-    #[test]
-    fn split_list_marker_handles_unicode_whitespace() {
-        assert_eq!(
-            split_list_marker("-\u{2003}item"),
-            Some(("-\u{2003}", "item"))
-        );
-        assert_eq!(
-            split_list_marker("1.\u{2003}item"),
-            Some(("1.\u{2003}", "item"))
-        );
-    }
 
     #[test]
     fn clamped_scroll_position_bounds_overscrolled_state() {
