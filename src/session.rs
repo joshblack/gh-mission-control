@@ -675,6 +675,35 @@ mod tests {
     }
 
     #[test]
+    fn remote_task_from_json_builds_remote_session() {
+        let task = serde_json::json!({
+            "id": "task-1",
+            "name": "Fix remote bug",
+            "repository": { "nameWithOwner": "owner/repo" },
+            "state": "in_progress",
+            "createdAt": "2026-05-08T10:00:00Z",
+            "updatedAt": "2026-05-08T11:00:00Z",
+            "pullRequestNumber": 42,
+            "pullRequestTitle": "Fix remote bug",
+            "pullRequestState": "OPEN",
+            "pullRequestUrl": "https://github.com/owner/repo/pull/42",
+            "user": { "login": "octocat" }
+        });
+
+        let session = remote_task_from_json(task).expect("remote task should parse");
+
+        assert_eq!(session.source, SessionSource::Remote);
+        assert_eq!(session.status, SessionStatus::Running);
+        assert_eq!(session.group_key(), "owner/repo");
+        assert_eq!(session.display_name(), "Fix remote bug");
+        assert_eq!(session.remote_user.as_deref(), Some("octocat"));
+        assert_eq!(
+            session.pull_request.as_deref(),
+            Some("#42 Fix remote bug (OPEN)")
+        );
+    }
+
+    #[test]
     fn event_status_reports_waiting_after_turn_end() {
         let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
 {"type":"assistant.turn_end","data":{"turnId":"1"}}"#;
