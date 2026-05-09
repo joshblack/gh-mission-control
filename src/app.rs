@@ -412,7 +412,9 @@ impl App {
         }
 
         let current = self.input_buffer.trim();
-        let current_index = suggestions.iter().position(|suggestion| suggestion == current);
+        let current_index = suggestions
+            .iter()
+            .position(|suggestion| suggestion == current);
         let next_index = match current_index {
             Some(index) if reverse => index.checked_sub(1).unwrap_or(suggestions.len() - 1),
             Some(index) => (index + 1) % suggestions.len(),
