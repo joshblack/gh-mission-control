@@ -71,7 +71,6 @@ where
 
     loop {
         resize_embedded_terminal(app, terminal.size()?);
-        app.load_selected_remote_preview();
         terminal.draw(|f| ui::draw(f, app))?;
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
@@ -247,17 +246,20 @@ fn notify_waiting_agent() {
 }
 
 fn open_remote_task_in_browser(id: &str) -> Result<()> {
-    let status = Command::new("gh")
+    let output = Command::new("gh")
         .args(["agent-task", "view", id, "--web"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .context("gh agent-task view --web failed to launch")?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        anyhow::bail!("gh agent-task view --web exited with {status}");
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("gh agent-task view --web exited with {}", output.status);
+        }
+        anyhow::bail!("{stderr}");
     }
 }
 

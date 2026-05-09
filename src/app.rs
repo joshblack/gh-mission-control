@@ -86,7 +86,7 @@ impl App {
         let selected_session = flat_list.first().copied();
         let cursor = 0;
 
-        App {
+        let mut app = App {
             sessions,
             flat_list,
             cursor,
@@ -105,7 +105,9 @@ impl App {
             notified_waiting_sessions: HashSet::new(),
             embedded_terminal: None,
             terminal_fullscreen: false,
-        }
+        };
+        app.load_selected_remote_preview();
+        app
     }
 
     pub fn reload(&mut self) {
@@ -215,6 +217,7 @@ impl App {
             self.selected_session = Some(idx);
             self.active_panel = Panel::Detail;
             self.detail_scroll = 0;
+            self.load_selected_remote_preview();
         }
     }
 
@@ -371,6 +374,7 @@ impl App {
         if let Some(idx) = self.session_at_cursor() {
             self.selected_session = Some(idx);
             self.detail_scroll = 0;
+            self.load_selected_remote_preview();
         }
     }
 }

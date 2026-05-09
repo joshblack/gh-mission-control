@@ -284,14 +284,17 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
 pub fn load_remote_task_log(session_id: &str) -> String {
     let output = Command::new("gh")
         .args(["agent-task", "view", session_id, "--log"])
-        .stderr(Stdio::null())
         .output();
 
     let Ok(output) = output else {
-        return String::new();
+        return "Failed to run `gh agent-task view --log`.".to_string();
     };
     if !output.status.success() {
-        return String::new();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return format!("Failed to load remote task log: {}", output.status);
+        }
+        return format!("Failed to load remote task log: {stderr}");
     }
 
     String::from_utf8_lossy(&output.stdout).trim().to_string()
