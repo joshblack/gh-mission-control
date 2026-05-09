@@ -766,23 +766,31 @@ fn is_heading(trimmed: &str) -> bool {
 }
 
 fn split_list_marker(trimmed: &str) -> Option<(&str, &str)> {
-    if trimmed.len() >= 2 {
-        let marker = &trimmed[..1];
-        if matches!(marker, "-" | "*" | "+") && trimmed[1..].starts_with(char::is_whitespace) {
-            return Some((&trimmed[..2], &trimmed[2..]));
+    let mut chars = trimmed.char_indices();
+    if let Some((_, marker)) = chars.next() {
+        if matches!(marker, '-' | '*' | '+') {
+            if let Some((whitespace_start, whitespace)) = chars.next() {
+                if whitespace.is_whitespace() {
+                    let rest_start = whitespace_start + whitespace.len_utf8();
+                    return Some((&trimmed[..rest_start], &trimmed[rest_start..]));
+                }
+            }
         }
     }
 
     let marker_end = trimmed.find('.')?;
+    let after_dot = &trimmed[marker_end + 1..];
+    let whitespace = after_dot.chars().next()?;
     if marker_end == 0
         || marker_end > MAX_LIST_MARKER_DIGITS
         || !trimmed[..marker_end].chars().all(|ch| ch.is_ascii_digit())
-        || !trimmed[marker_end + 1..].starts_with(char::is_whitespace)
+        || !whitespace.is_whitespace()
     {
         return None;
     }
 
-    Some((&trimmed[..marker_end + 2], &trimmed[marker_end + 2..]))
+    let rest_start = marker_end + 1 + whitespace.len_utf8();
+    Some((&trimmed[..rest_start], &trimmed[rest_start..]))
 }
 
 fn status_display(status: &SessionStatus) -> (Color, &'static str) {
@@ -1137,4 +1145,32 @@ fn short_path(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_list_marker_handles_ascii_markers() {
+        assert_eq!(split_list_marker("- item"), Some(("- ", "item")));
+        assert_eq!(split_list_marker("10. item"), Some(("10. ", "item")));
+    }
+
+    #[test]
+    fn split_list_marker_ignores_unicode_bullets() {
+        assert_eq!(split_list_marker("• item"), None);
+    }
+
+    #[test]
+    fn split_list_marker_handles_unicode_whitespace() {
+        assert_eq!(
+            split_list_marker("-\u{2003}item"),
+            Some(("-\u{2003}", "item"))
+        );
+        assert_eq!(
+            split_list_marker("1.\u{2003}item"),
+            Some(("1.\u{2003}", "item"))
+        );
+    }
 }
