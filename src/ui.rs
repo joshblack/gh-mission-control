@@ -672,7 +672,13 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(turns_para, layout[1]);
 
     if total_lines > visible_height {
-        let mut scroll_state = ScrollbarState::new(total_lines).position(app.detail_scroll);
+        let mut scroll_state = ScrollbarState::new(total_lines)
+            .position(scrollbar_position(
+                app.detail_scroll,
+                total_lines,
+                visible_height,
+            ))
+            .viewport_content_length(visible_height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
@@ -1140,7 +1146,13 @@ fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(help, inner);
 
     if total_lines > visible_height {
-        let mut scroll_state = ScrollbarState::new(total_lines).position(help_scroll);
+        let mut scroll_state = ScrollbarState::new(total_lines)
+            .position(scrollbar_position(
+                help_scroll,
+                total_lines,
+                visible_height,
+            ))
+            .viewport_content_length(visible_height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
@@ -1247,6 +1259,19 @@ fn clamped_scroll_position(scroll: usize, total_lines: usize, visible_height: us
     scroll.min(max_scroll)
 }
 
+fn scrollbar_position(scroll: usize, total_lines: usize, visible_height: usize) -> usize {
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    if max_scroll == 0 {
+        return 0;
+    }
+
+    let max_position = total_lines.saturating_sub(1);
+    scroll
+        .min(max_scroll)
+        .saturating_mul(max_position)
+        / max_scroll
+}
+
 fn short_path(path: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         let home_str = home.to_string_lossy().to_string();
@@ -1289,5 +1314,12 @@ mod tests {
         let clamped = clamped_scroll_position(20, 10, 4);
 
         assert_eq!(clamped, 6);
+    }
+
+    #[test]
+    fn scrollbar_position_tracks_visible_scroll_range() {
+        assert_eq!(scrollbar_position(0, 10, 4), 0);
+        assert_eq!(scrollbar_position(6, 10, 4), 9);
+        assert_eq!(scrollbar_position(20, 10, 4), 9);
     }
 }
