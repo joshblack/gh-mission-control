@@ -167,8 +167,13 @@ impl App {
 
     fn replace_sessions(&mut self, sessions: Vec<CopilotSession>) {
         self.sessions = sessions;
+        let session_ids: HashSet<&str> = self
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect();
         self.notified_waiting_sessions
-            .retain(|id| self.sessions.iter().any(|session| &session.id == id));
+            .retain(|id| session_ids.contains(id.as_str()));
         self.clear_missing_focused_group();
         self.flat_list = build_flat_list(
             &self.sessions,

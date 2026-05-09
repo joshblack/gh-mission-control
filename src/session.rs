@@ -314,6 +314,8 @@ fn detect_session_status(
         return SessionStatus::Idle;
     }
 
+    // The event stream records turn starts, permission prompts, and turn ends as
+    // they happen, so it reflects live agent state before the summary DB catches up.
     if let Some(status) =
         detect_session_status_from_events(&event_log_path(copilot_dir, session_id))
     {
@@ -358,35 +360,45 @@ fn detect_session_status_from_event_content(content: &str) -> Option<SessionStat
         };
         saw_event = true;
 
-        let data = event.get("data").unwrap_or(&serde_json::Value::Null);
+        let data = event.get("data");
         match event_type {
             "assistant.turn_start" => {
                 active_turn = data
-                    .get("turnId")
+                    .and_then(|data| data.get("turnId"))
                     .and_then(|value| value.as_str())
                     .map(ToString::to_string);
                 pending_permissions.clear();
                 saw_error = false;
             }
             "assistant.turn_end" => {
-                if active_turn.as_deref() == data.get("turnId").and_then(|value| value.as_str()) {
+                if active_turn.as_deref()
+                    == data
+                        .and_then(|data| data.get("turnId"))
+                        .and_then(|value| value.as_str())
+                {
                     active_turn = None;
                     pending_permissions.clear();
                 }
             }
             "permission.requested" => {
-                if let Some(request_id) = data.get("requestId").and_then(|value| value.as_str()) {
+                if let Some(request_id) = data
+                    .and_then(|data| data.get("requestId"))
+                    .and_then(|value| value.as_str())
+                {
                     pending_permissions.insert(request_id.to_string());
                 }
             }
             "permission.completed" => {
-                if let Some(request_id) = data.get("requestId").and_then(|value| value.as_str()) {
+                if let Some(request_id) = data
+                    .and_then(|data| data.get("requestId"))
+                    .and_then(|value| value.as_str())
+                {
                     pending_permissions.remove(request_id);
                 }
             }
             "tool.execution_complete" => {
                 if data
-                    .get("success")
+                    .and_then(|data| data.get("success"))
                     .and_then(|value| value.as_bool())
                     .is_some_and(|success| !success)
                 {
