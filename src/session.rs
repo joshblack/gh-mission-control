@@ -260,7 +260,10 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
             .map(|state| format!("Remote agent task ({state})"))
     });
 
-    let remote_url = remote_task_url(repository.as_deref(), &id);
+    let pull_request_number = value_text(task.get("pullRequestNumber")).or_else(|| {
+        value_text(task.get("pullRequestUrl")).and_then(|url| pull_request_number_from_url(&url))
+    });
+    let remote_url = remote_task_url(repository.as_deref(), pull_request_number.as_deref(), &id);
 
     Some(CopilotSession {
         id,
@@ -286,13 +289,28 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
     })
 }
 
-fn remote_task_url(repository: Option<&str>, id: &str) -> Option<String> {
+fn remote_task_url(
+    repository: Option<&str>,
+    pull_request_number: Option<&str>,
+    id: &str,
+) -> Option<String> {
     let repository = repository?;
+    let pull_request_number = pull_request_number?;
     let (owner, repo) = repository.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() || id.is_empty() {
+    if owner.is_empty() || repo.is_empty() || pull_request_number.is_empty() || id.is_empty() {
         return None;
     }
-    Some(format!("https://github.com/{owner}/{repo}/tasks/{id}"))
+    Some(format!(
+        "https://github.com/{owner}/{repo}/pull/{pull_request_number}/agent-sessions/{id}"
+    ))
+}
+
+fn pull_request_number_from_url(url: &str) -> Option<String> {
+    let number = url.split("/pull/").nth(1)?.split('/').next()?;
+    if number.is_empty() {
+        return None;
+    }
+    Some(number.to_string())
 }
 
 pub fn load_remote_task_log(session_id: &str) -> String {
@@ -837,7 +855,7 @@ mod tests {
         assert_eq!(session.remote_user.as_deref(), Some("octocat"));
         assert_eq!(
             session.remote_url.as_deref(),
-            Some("https://github.com/owner/repo/tasks/task-1")
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
         );
         assert_eq!(
             session.pull_request.as_deref(),
@@ -846,15 +864,36 @@ mod tests {
     }
 
     #[test]
-    fn remote_task_url_requires_owner_and_repo() {
+    fn remote_task_url_requires_owner_repo_and_pull_request() {
         assert_eq!(
-            remote_task_url(Some("owner/repo"), "task-1").as_deref(),
-            Some("https://github.com/owner/repo/tasks/task-1")
+            remote_task_url(Some("owner/repo"), Some("42"), "task-1").as_deref(),
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
         );
-        assert_eq!(remote_task_url(None, "task-1"), None);
-        assert_eq!(remote_task_url(Some("repo"), "task-1"), None);
-        assert_eq!(remote_task_url(Some("owner/"), "task-1"), None);
-        assert_eq!(remote_task_url(Some("owner/repo"), ""), None);
+        assert_eq!(remote_task_url(None, Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("repo"), Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/"), Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/repo"), None, "task-1"), None);
+        assert_eq!(
+            remote_task_url(Some("owner/repo"), Some(""), "task-1"),
+            None
+        );
+        assert_eq!(remote_task_url(Some("owner/repo"), Some("42"), ""), None);
+    }
+
+    #[test]
+    fn remote_task_url_uses_pull_request_url_when_number_missing() {
+        let task = serde_json::json!({
+            "id": "task-1",
+            "repository": "owner/repo",
+            "pullRequestUrl": "https://github.com/owner/repo/pull/42",
+        });
+
+        let session = remote_task_from_json(task).expect("remote task should parse");
+
+        assert_eq!(
+            session.remote_url.as_deref(),
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
+        );
     }
 
     #[test]

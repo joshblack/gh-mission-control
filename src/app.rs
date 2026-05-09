@@ -520,14 +520,18 @@ mod tests {
     #[test]
     fn opening_remote_task_uses_task_url() {
         let mut remote = session("remote", SessionSource::Remote);
-        remote.remote_url = Some("https://github.com/owner/repo/tasks/remote".to_string());
+        remote.remote_url =
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/remote".to_string());
         let mut app = app_with_sessions(vec![remote]);
 
         app.open_session_embedded();
 
         match app.pending_action {
             PendingAction::OpenRemoteTask { ref url } => {
-                assert_eq!(url, "https://github.com/owner/repo/tasks/remote");
+                assert_eq!(
+                    url,
+                    "https://github.com/owner/repo/pull/42/agent-sessions/remote"
+                );
             }
             _ => panic!("expected remote task to open in browser"),
         }

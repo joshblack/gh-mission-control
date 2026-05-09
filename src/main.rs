@@ -452,30 +452,23 @@ mod tests {
 
     #[test]
     fn browser_open_command_uses_url_directly() {
-        let (program, args) = browser_open_command("https://github.com/owner/repo/tasks/task-1");
+        let url = "https://github.com/owner/repo/pull/42/agent-sessions/task-1";
+        let (program, args) = browser_open_command(url);
 
         #[cfg(target_os = "macos")]
         {
             assert_eq!(program, "open");
-            assert_eq!(args, vec!["https://github.com/owner/repo/tasks/task-1"]);
+            assert_eq!(args, vec![url]);
         }
         #[cfg(target_os = "windows")]
         {
             assert_eq!(program, "cmd");
-            assert_eq!(
-                args,
-                vec![
-                    "/C",
-                    "start",
-                    "",
-                    "https://github.com/owner/repo/tasks/task-1"
-                ]
-            );
+            assert_eq!(args, vec!["/C", "start", "", url]);
         }
         #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
         {
             assert_eq!(program, "xdg-open");
-            assert_eq!(args, vec!["https://github.com/owner/repo/tasks/task-1"]);
+            assert_eq!(args, vec![url]);
         }
     }
 }
