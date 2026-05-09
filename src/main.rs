@@ -70,6 +70,7 @@ where
     let mut last_status_poll = Instant::now();
 
     loop {
+        app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
         terminal.draw(|f| ui::draw(f, app))?;
 

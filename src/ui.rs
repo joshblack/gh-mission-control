@@ -483,9 +483,15 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(MUTED_COLOR),
                 )));
             }
+            None if app.is_remote_log_loading(&session.id) => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  Loading...",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
             None => {
                 turn_lines.push(Line::from(Span::styled(
-                    "  Loading remote task log…",
+                    "  Press [Enter] to load this remote task log.",
                     Style::default().fg(MUTED_COLOR),
                 )));
             }
