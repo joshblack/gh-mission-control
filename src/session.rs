@@ -2,10 +2,13 @@ use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashSet;
 use std::fs;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const REMOTE_AGENT_GROUP: &str = "Remote agent tasks";
+const REMOTE_LOG_PREVIEW_BYTES: usize = 128 * 1024;
+const REMOTE_LOG_PREVIEW_LINES: usize = 200;
 
 // ── Status ──────────────────────────────────────────────────────────────────
 
@@ -282,22 +285,117 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
 }
 
 pub fn load_remote_task_log(session_id: &str) -> String {
-    let output = Command::new("gh")
+    let mut child = match Command::new("gh")
         .args(["agent-task", "view", session_id, "--log"])
-        .output();
-
-    let Ok(output) = output else {
-        return "Failed to run `gh agent-task view --log`.".to_string();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return "Failed to run `gh agent-task view --log`.".to_string(),
     };
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.is_empty() {
-            return format!("Failed to load remote task log: {}", output.status);
+
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return "Failed to read remote task log.".to_string();
+    };
+    let stderr_handle = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut output = String::new();
+            let _ = stderr.read_to_string(&mut output);
+            output
+        })
+    });
+
+    let (output, truncated) = match read_remote_log_preview(stdout) {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = collect_remote_log_stderr(stderr_handle);
+            return "Failed to read remote task log.".to_string();
         }
-        return format!("Failed to load remote task log: {stderr}");
+    };
+
+    if truncated {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = collect_remote_log_stderr(stderr_handle);
+    } else {
+        let status = match child.wait() {
+            Ok(status) => status,
+            Err(_) => {
+                let _ = collect_remote_log_stderr(stderr_handle);
+                return "Failed to load remote task log.".to_string();
+            }
+        };
+        if !status.success() {
+            let stderr = sanitize_remote_log(&collect_remote_log_stderr(stderr_handle));
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                return format!("Failed to load remote task log: {status}");
+            }
+            return format!("Failed to load remote task log: {stderr}");
+        }
+        let _ = collect_remote_log_stderr(stderr_handle);
     }
 
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    let mut log = sanitize_remote_log(&String::from_utf8_lossy(&output))
+        .trim()
+        .to_string();
+    if truncated {
+        if !log.is_empty() {
+            log.push('\n');
+        }
+        log.push_str("… (log preview truncated)");
+    }
+    log
+}
+
+fn read_remote_log_preview(stdout: impl Read) -> io::Result<(Vec<u8>, bool)> {
+    let mut reader = BufReader::new(stdout);
+    let mut output = Vec::new();
+    let mut bytes = 0;
+    let mut lines = 0;
+
+    loop {
+        if bytes >= REMOTE_LOG_PREVIEW_BYTES || lines >= REMOTE_LOG_PREVIEW_LINES {
+            return Ok((output, true));
+        }
+
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok((output, false));
+        }
+
+        let mut consumed = 0;
+        for &byte in buffer {
+            if bytes >= REMOTE_LOG_PREVIEW_BYTES || lines >= REMOTE_LOG_PREVIEW_LINES {
+                break;
+            }
+            output.push(byte);
+            bytes += 1;
+            consumed += 1;
+            if byte == b'\n' {
+                lines += 1;
+            }
+        }
+
+        reader.consume(consumed);
+    }
+}
+
+fn collect_remote_log_stderr(handle: Option<std::thread::JoinHandle<String>>) -> String {
+    handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default()
+}
+
+fn sanitize_remote_log(log: &str) -> String {
+    log.chars()
+        .filter(|ch| *ch == '\n' || *ch == '\t' || !ch.is_control())
+        .collect()
 }
 
 fn value_text(value: Option<&serde_json::Value>) -> Option<String> {
@@ -729,6 +827,39 @@ mod tests {
         assert_eq!(
             session.pull_request.as_deref(),
             Some("#42 Fix remote bug (OPEN)")
+        );
+    }
+
+    #[test]
+    fn remote_log_preview_limits_lines() {
+        let log = (0..REMOTE_LOG_PREVIEW_LINES + 10)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+
+        let (preview, truncated) = read_remote_log_preview(log.as_bytes()).unwrap();
+
+        assert!(truncated);
+        assert_eq!(
+            String::from_utf8(preview).unwrap().lines().count(),
+            REMOTE_LOG_PREVIEW_LINES
+        );
+    }
+
+    #[test]
+    fn remote_log_preview_limits_bytes() {
+        let log = vec![b'a'; REMOTE_LOG_PREVIEW_BYTES + 10];
+
+        let (preview, truncated) = read_remote_log_preview(log.as_slice()).unwrap();
+
+        assert!(truncated);
+        assert_eq!(preview.len(), REMOTE_LOG_PREVIEW_BYTES);
+    }
+
+    #[test]
+    fn sanitize_remote_log_removes_control_characters() {
+        assert_eq!(
+            sanitize_remote_log("start\u{1b}[31m red\u{0} text\nnext\tline"),
+            "start[31m red text\nnext\tline"
         );
     }
 

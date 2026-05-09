@@ -32,6 +32,8 @@ const MARKDOWN_CODE_COLOR: Color = RUNNING_COLOR;
 const MAX_LIST_MARKER_DIGITS: usize = 9;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
+/// Maximum lines shown for remote task log previews before truncating.
+const MAX_REMOTE_LOG_LINES: usize = 200;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -463,7 +465,17 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         turn_lines.push(Line::from(Span::raw("")));
         match session.remote_log.as_deref() {
             Some(log) if !log.is_empty() => {
-                push_markdown_lines(&mut turn_lines, log, MARKDOWN_TEXT_COLOR, None);
+                if push_markdown_lines(
+                    &mut turn_lines,
+                    log,
+                    MARKDOWN_TEXT_COLOR,
+                    Some(MAX_REMOTE_LOG_LINES),
+                ) {
+                    turn_lines.push(Line::from(Span::styled(
+                        "  … (truncated)",
+                        Style::default().fg(MUTED_COLOR),
+                    )));
+                }
             }
             Some(_) => {
                 turn_lines.push(Line::from(Span::styled(
