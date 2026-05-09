@@ -409,16 +409,19 @@ fn handle_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match key {
         KeyCode::Enter => app.confirm_new_session(),
         KeyCode::Esc => app.cancel_input(),
-        KeyCode::Tab => app.complete_input_with_next_directory_suggestion(false),
-        KeyCode::BackTab => app.complete_input_with_next_directory_suggestion(true),
+        KeyCode::Down => app.select_next_directory_suggestion(),
+        KeyCode::Up => app.select_previous_directory_suggestion(),
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
             app.input_buffer.clear();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            app.sync_directory_suggestion_cursor();
         }
         _ => {}
     }
@@ -428,16 +431,19 @@ fn handle_directory_filter_input(app: &mut App, key: KeyCode, modifiers: KeyModi
     match key {
         KeyCode::Enter => app.confirm_directory_filter(),
         KeyCode::Esc => app.cancel_input(),
-        KeyCode::Tab => app.complete_input_with_next_directory_suggestion(false),
-        KeyCode::BackTab => app.complete_input_with_next_directory_suggestion(true),
+        KeyCode::Down => app.select_next_directory_suggestion(),
+        KeyCode::Up => app.select_previous_directory_suggestion(),
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
             app.input_buffer.clear();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            app.sync_directory_suggestion_cursor();
         }
         _ => {}
     }
