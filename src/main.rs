@@ -24,6 +24,7 @@ use std::{
 use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
 
 const CLEAR_TERMINAL_PROGRESS: &[u8] = b"\x1b]9;4;0;0\x07";
+const TERMINAL_PROGRESS_CLEAR_PREFIX: &[u8] = b"\x1b]9;4;0";
 
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
@@ -287,8 +288,10 @@ fn terminal_progress_event(app: &App, progress_visible: &mut bool) -> Option<Vec
 }
 
 fn is_terminal_progress_clear(event: &[u8]) -> bool {
-    matches!(event.get(b"\x1b]9;4;0".len()), Some(b';') | Some(b'\x07'))
-        && event.starts_with(b"\x1b]9;4;0")
+    matches!(
+        event.get(TERMINAL_PROGRESS_CLEAR_PREFIX.len()),
+        Some(b';') | Some(b'\x07')
+    ) && event.starts_with(TERMINAL_PROGRESS_CLEAR_PREFIX)
 }
 
 fn open_url_in_browser(url: &str) -> Result<()> {
