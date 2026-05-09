@@ -77,8 +77,11 @@ pub struct App {
     pub embedded_terminal: Option<EmbeddedTerminal>,
     /// Whether the embedded terminal is taking the full TUI area.
     pub terminal_fullscreen: bool,
+    /// Sends completed remote log loads from background workers to the main loop.
     remote_log_sender: Sender<(String, String)>,
+    /// Receives completed remote log loads without blocking the UI.
     remote_log_receiver: Receiver<(String, String)>,
+    /// Remote session IDs whose logs are currently loading in the background.
     remote_logs_loading: HashSet<String>,
 }
 
@@ -336,6 +339,7 @@ impl App {
         }
     }
 
+    /// Starts loading the selected remote task log in the background if needed.
     fn load_selected_remote_preview(&mut self) {
         let Some(idx) = self.selected_session else {
             return;
@@ -352,7 +356,7 @@ impl App {
         let sender = self.remote_log_sender.clone();
         std::thread::spawn(move || {
             let log = load_remote_task_log(&id);
-            let _ = sender.send((id, log));
+            drop(sender.send((id, log)));
         });
     }
 
