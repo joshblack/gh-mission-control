@@ -1,6 +1,7 @@
 use crate::session::{
-    load_remote_task_log, load_sessions, refresh_session_statuses_with_cache, CopilotSession,
-    SessionSource, SessionStatus, SessionStatusCache,
+    load_local_session_ids, load_remote_task_log, load_sessions,
+    refresh_session_statuses_with_cache, CopilotSession, SessionSource, SessionStatus,
+    SessionStatusCache,
 };
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
@@ -288,10 +289,12 @@ impl App {
 
     pub fn capture_new_session_reload_baseline(&mut self) {
         self.new_session_reload_baseline = Some(
-            self.sessions
-                .iter()
-                .map(|session| session.id.clone())
-                .collect(),
+            load_local_session_ids(&self.copilot_dir).unwrap_or_else(|_| {
+                self.sessions
+                    .iter()
+                    .map(|session| session.id.clone())
+                    .collect()
+            }),
         );
         self.new_session_tmux_session = None;
     }
@@ -991,6 +994,28 @@ mod tests {
         }
     }
 
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+
+    fn write_workspace(copilot_dir: &Path, id: &str, updated_at: chrono::DateTime<Utc>) {
+        let session_dir = copilot_dir.join("session-state").join(id);
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("workspace.yaml"),
+            format!(
+                "id: {id}\ncwd: /tmp\ncreated_at: {}\nupdated_at: {}\n",
+                updated_at.to_rfc3339(),
+                updated_at.to_rfc3339()
+            ),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn terminal_title_defaults_to_app_title_without_selection() {
         let app = app_with_sessions(vec![]);
@@ -1202,6 +1227,25 @@ mod tests {
             app.take_new_session_tmux_session().as_deref(),
             Some("ghpilot_new_123")
         );
+    }
+
+    #[test]
+    fn new_session_baseline_uses_disk_state_when_ui_has_not_loaded() {
+        let root = unique_test_dir("gh-pilot-baseline");
+        let copilot_dir = root.join(".copilot");
+        write_workspace(&copilot_dir, "existing", Utc::now());
+
+        let mut app = App::new(copilot_dir.clone(), root.clone());
+        app.capture_new_session_reload_baseline();
+        write_workspace(
+            &copilot_dir,
+            "new",
+            Utc::now() - chrono::Duration::minutes(1),
+        );
+
+        assert_eq!(app.reload_if_new_session_created().as_deref(), Some("new"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

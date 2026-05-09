@@ -178,6 +178,24 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     sessions
 }
 
+pub fn load_local_session_ids(copilot_dir: &Path) -> io::Result<HashSet<String>> {
+    let mut ids = HashSet::new();
+    for entry in fs::read_dir(session_state_dir(copilot_dir))? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let workspace = path.join("workspace.yaml");
+        let Ok(content) = fs::read_to_string(workspace) else {
+            continue;
+        };
+        if let Some(session) = parse_workspace_yaml(&content) {
+            ids.insert(session.id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Incremental status-polling state for append-only Copilot event logs.
 #[derive(Debug, Default)]
 pub struct SessionStatusCache {
