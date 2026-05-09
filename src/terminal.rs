@@ -128,10 +128,7 @@ impl EmbeddedTerminal {
             rows,
             cols,
             1000,
-            TerminalCallbacks {
-                progress_event: Arc::clone(&progress_event),
-                window_title: None,
-            },
+            TerminalCallbacks::new(Arc::clone(&progress_event)),
         )));
         let child_exited = Arc::new(AtomicBool::new(false));
 
@@ -285,10 +282,10 @@ pub(crate) struct TerminalCallbacks {
     window_title: Option<String>,
 }
 
-impl Default for TerminalCallbacks {
-    fn default() -> Self {
+impl TerminalCallbacks {
+    fn new(progress_event: Arc<Mutex<Option<Vec<u8>>>>) -> Self {
         Self {
-            progress_event: Arc::new(Mutex::new(None)),
+            progress_event,
             window_title: None,
         }
     }
@@ -492,10 +489,7 @@ mod tests {
             1,
             1,
             0,
-            TerminalCallbacks {
-                progress_event: Arc::clone(&progress_event),
-                window_title: None,
-            },
+            TerminalCallbacks::new(Arc::clone(&progress_event)),
         );
 
         parser.process(b"\x1b]9;4;1;50\x07");
@@ -518,7 +512,7 @@ mod tests {
 
     #[test]
     fn parser_captures_window_title_from_osc_2() {
-        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, TerminalCallbacks::default());
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, test_terminal_callbacks());
 
         parser.process(b"\x1b]2;Fix title from Copilot CLI\x07");
 
@@ -530,7 +524,7 @@ mod tests {
 
     #[test]
     fn parser_captures_window_title_from_osc_0() {
-        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, TerminalCallbacks::default());
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, test_terminal_callbacks());
 
         parser.process(b"\x1b]0;Current Copilot session\x07");
 
@@ -547,5 +541,9 @@ mod tests {
             Some("Updated Copilot Title")
         );
         assert_eq!(title_from_tmux_output(b" \n"), None);
+    }
+
+    fn test_terminal_callbacks() -> TerminalCallbacks {
+        TerminalCallbacks::new(Arc::new(Mutex::new(None)))
     }
 }
