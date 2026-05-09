@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, MutexGuard,
@@ -21,6 +22,7 @@ pub struct EmbeddedTerminal {
     /// Shared vt100 screen state updated by the background reader thread.
     parser: Arc<Mutex<TerminalParser>>,
     progress_event: Arc<Mutex<Option<Vec<u8>>>>,
+    raw_output: Mutex<Receiver<Vec<u8>>>,
     /// Write bytes (keyboard input) into the PTY master.
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     /// Set to `true` by the reader thread when the child process exits.
@@ -124,6 +126,7 @@ impl EmbeddedTerminal {
         let reader = master.try_clone_reader()?;
 
         let progress_event = Arc::new(Mutex::new(None));
+        let (raw_output_tx, raw_output_rx) = mpsc::channel();
         let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
             rows,
             cols,
@@ -147,6 +150,7 @@ impl EmbeddedTerminal {
                     }
                     Ok(n) => {
                         lock_parser(&parser_clone).process(&buf[..n]);
+                        let _ = raw_output_tx.send(buf[..n].to_vec());
                     }
                 }
             }
@@ -157,6 +161,7 @@ impl EmbeddedTerminal {
         Ok(Self {
             parser,
             progress_event,
+            raw_output: Mutex::new(raw_output_rx),
             writer: Mutex::new(writer),
             child_exited,
             session_id,
@@ -212,6 +217,18 @@ impl EmbeddedTerminal {
         if let Ok(mut progress_event) = self.progress_event.lock() {
             *progress_event = None;
         }
+    }
+
+    pub(crate) fn drain_raw_output(&self) -> Vec<Vec<u8>> {
+        let Ok(raw_output) = self.raw_output.lock() else {
+            return Vec::new();
+        };
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = raw_output.try_recv() {
+            chunks.push(chunk);
+        }
+        chunks
     }
 
     pub fn terminal_title(&self) -> Option<String> {

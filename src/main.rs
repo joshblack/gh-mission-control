@@ -75,6 +75,7 @@ where
     let mut last_new_session_reload_check: Option<Instant> = None;
     let mut last_status_poll = Instant::now();
     let mut terminal_progress_visible = false;
+    let mut terminal_passthrough_active = false;
     let mut last_terminal_title = String::new();
 
     loop {
@@ -82,8 +83,26 @@ where
         app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
         update_terminal_title(terminal, app, &mut last_terminal_title)?;
-        terminal.draw(|f| ui::draw(f, app))?;
-        forward_terminal_progress(app, &mut terminal_progress_visible);
+        if should_passthrough_terminal(app) {
+            if !terminal_passthrough_active {
+                terminal.clear()?;
+                terminal_passthrough_active = true;
+            }
+            forward_terminal_raw_output(terminal, app)?;
+            if let Some(term) = app.embedded_terminal.as_ref() {
+                term.clear_progress_event();
+            }
+        } else {
+            if terminal_passthrough_active {
+                terminal.clear()?;
+                write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
+                terminal_progress_visible = false;
+                terminal_passthrough_active = false;
+            }
+            discard_terminal_raw_output(app);
+            terminal.draw(|f| ui::draw(f, app))?;
+            forward_terminal_progress(app, &mut terminal_progress_visible);
+        }
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
         let action = std::mem::replace(&mut app.pending_action, PendingAction::None);
@@ -249,11 +268,15 @@ where
         }
     }
 
-    if terminal_progress_visible {
+    if terminal_passthrough_active || terminal_progress_visible {
         write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
     }
 
     Ok(())
+}
+
+fn should_passthrough_terminal(app: &App) -> bool {
+    app.mode == Mode::Terminal && app.terminal_fullscreen
 }
 
 fn update_terminal_title<B: ratatui::backend::Backend + Write>(
@@ -275,6 +298,33 @@ where
 fn notify_waiting_agent() {
     let _ = io::stdout().write_all(b"\x07");
     let _ = io::stdout().flush();
+}
+
+fn forward_terminal_raw_output<B: ratatui::backend::Backend + Write>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let Some(term) = app.embedded_terminal.as_ref() else {
+        return Ok(());
+    };
+
+    for chunk in term.drain_raw_output() {
+        terminal
+            .backend_mut()
+            .write_all(&chunk)
+            .context("Failed to write terminal output")?;
+    }
+    Write::flush(terminal.backend_mut()).context("Failed to flush terminal output")?;
+    Ok(())
+}
+
+fn discard_terminal_raw_output(app: &App) {
+    if let Some(term) = app.embedded_terminal.as_ref() {
+        let _ = term.drain_raw_output();
+    }
 }
 
 fn forward_terminal_progress(app: &App, progress_visible: &mut bool) {
@@ -617,5 +667,18 @@ mod tests {
         );
 
         assert_eq!((rows, cols), (40, 120));
+    }
+
+    #[test]
+    fn terminal_passthrough_only_runs_for_fullscreen_terminals() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        assert!(!should_passthrough_terminal(&app));
+
+        app.mode = Mode::Terminal;
+        assert!(!should_passthrough_terminal(&app));
+
+        app.terminal_fullscreen = true;
+        assert!(should_passthrough_terminal(&app));
     }
 }
