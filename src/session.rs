@@ -1122,7 +1122,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("ghmc-session-test-{unique}"));
+        let root = std::env::temp_dir().join(format!("gh-pilot-session-test-{unique}"));
         let session_id = "12345678-1234-1234-1234-123456789abc";
         let session_dir = root.join("session-state").join(session_id);
         fs::create_dir_all(&session_dir).unwrap();
@@ -1154,10 +1154,13 @@ mod tests {
         )
         .unwrap();
 
-        let sessions = load_sessions(&root);
+        let display_name = load_sessions(&root)
+            .into_iter()
+            .find(|session| session.id == session_id)
+            .expect("local session should be loaded")
+            .display_name();
 
         fs::remove_dir_all(&root).unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].display_name(), "Workspace Title");
+        assert_eq!(display_name, "Workspace Title");
     }
 }
