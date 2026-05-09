@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_event_loop<B: ratatui::backend::Backend>(
+fn run_event_loop<B: ratatui::backend::Backend + Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<()>
@@ -245,7 +245,7 @@ where
     Ok(())
 }
 
-fn update_terminal_title<B: ratatui::backend::Backend>(
+fn update_terminal_title<B: ratatui::backend::Backend + Write>(
     terminal: &mut Terminal<B>,
     app: &App,
     last_terminal_title: &mut String,
