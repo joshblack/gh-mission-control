@@ -308,13 +308,26 @@ fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) ->
         return (term_size.height.max(1), term_size.width.max(1));
     }
 
-    // Body + footer(1), with the terminal in the right 65% detail panel.
-    let height = term_size.height.saturating_sub(1);
-    let width = term_size.width * 65 / 100;
+    let area = ratatui::layout::Rect::new(0, 0, term_size.width, term_size.height);
+    let outer = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Min(0),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+    let cols = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Percentage(35),
+            ratatui::layout::Constraint::Percentage(65),
+        ])
+        .split(outer[0]);
+    let detail_panel = cols[1];
 
     // Subtract borders (2 each side).
-    let rows = height.saturating_sub(2).max(1);
-    let cols = width.saturating_sub(2).max(1); // left + right borders
+    let rows = detail_panel.height.saturating_sub(2).max(1);
+    let cols = detail_panel.width.saturating_sub(2).max(1);
     (rows, cols)
 }
 
@@ -527,6 +540,26 @@ mod tests {
         handle_normal(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
 
         assert_eq!(app.mode, Mode::DirectoryFilter);
+    }
+
+    #[test]
+    fn embedded_terminal_size_matches_detail_panel_inner_area() {
+        let term_size = ratatui::layout::Size {
+            width: 101,
+            height: 31,
+        };
+
+        assert_eq!(embedded_terminal_size(term_size, false), (28, 64));
+    }
+
+    #[test]
+    fn fullscreen_embedded_terminal_uses_full_terminal_size() {
+        let term_size = ratatui::layout::Size {
+            width: 101,
+            height: 31,
+        };
+
+        assert_eq!(embedded_terminal_size(term_size, true), (31, 101));
     }
 
     #[test]

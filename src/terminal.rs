@@ -13,6 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
 const TMUX_TITLE_CACHE_DURATION: Duration = Duration::from_millis(250);
+const TMUX_CLIENT_FEATURES: &str = "RGB";
+const COPILOT_TERM: &str = "xterm-256color";
+const COPILOT_COLORTERM: &str = "truecolor";
 pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
 pub(crate) type TerminalParser = vt100::Parser<TerminalCallbacks>;
 
@@ -61,12 +64,15 @@ impl EmbeddedTerminal {
         let master = pair.master;
 
         let tmux_session = tmux_session_name(&session_id);
-        let copilot_command = shell_command(copilot_bin, args);
+        let copilot_command = copilot_shell_command(copilot_bin, args);
 
         // Attach to an existing tmux session for this copilot session, or create
         // one in the session's cwd. tmux owns the CLI process; the PTY here is
         // only the embedded client that renders inside the preview panel.
         let mut cmd = CommandBuilder::new("tmux");
+        cmd.arg("-2");
+        cmd.arg("-T");
+        cmd.arg(TMUX_CLIENT_FEATURES);
         if tmux_has_session(&tmux_session) {
             cmd.arg("set-option");
             cmd.arg("-t");
@@ -111,8 +117,8 @@ impl EmbeddedTerminal {
             cmd.arg(&tmux_session);
         }
         // Tell copilot it's running in a color-capable terminal.
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM", COPILOT_TERM);
+        cmd.env("COLORTERM", COPILOT_COLORTERM);
 
         // Spawn the process inside the slave PTY, then drop the slave so that
         // we receive EOF on the master when the child exits.
@@ -350,6 +356,16 @@ fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
     shell_words::join(words)
 }
 
+fn copilot_shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
+    let words = [
+        "env".to_string(),
+        format!("TERM={COPILOT_TERM}"),
+        format!("COLORTERM={COPILOT_COLORTERM}"),
+        shell_command(copilot_bin, args),
+    ];
+    words.join(" ")
+}
+
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
@@ -461,5 +477,18 @@ mod tests {
             Some("Updated Copilot Title")
         );
         assert_eq!(title_from_tmux_output(b" \n"), None);
+    }
+
+    #[test]
+    fn copilot_shell_command_sets_native_terminal_capability_env() {
+        let command = copilot_shell_command(
+            Path::new("/usr/local/bin/copilot"),
+            &["-C", "/tmp/project dir", "--resume=session-1"],
+        );
+
+        assert_eq!(
+            command,
+            "env TERM=xterm-256color COLORTERM=truecolor /usr/local/bin/copilot -C '/tmp/project dir' '--resume=session-1'"
+        );
     }
 }

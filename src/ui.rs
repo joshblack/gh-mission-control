@@ -800,7 +800,22 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
 
     let rows = area.height as usize;
     let cols = area.width as usize;
+    let lines = vt100_screen_lines(screen, rows, cols);
 
+    // Render the screen content.
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
+
+    // Position the cursor.
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    if !screen.hide_cursor() && cursor_col < area.width && cursor_row < area.height {
+        f.set_cursor_position(Position {
+            x: area.x + cursor_col,
+            y: area.y + cursor_row,
+        });
+    }
+}
+
+fn vt100_screen_lines(screen: &vt100::Screen, rows: usize, cols: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::with_capacity(rows);
 
     for row in 0..rows {
@@ -810,6 +825,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
 
         for col in 0..cols {
             let (ch, style) = match screen.cell(row as u16, col as u16) {
+                Some(cell) if cell.is_wide_continuation() => continue,
                 Some(cell) => {
                     let c = cell.contents();
                     // Avoid an allocation for the common blank-cell case.
@@ -829,7 +845,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
                 if !cur_text.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut cur_text), cur_style));
                 }
-                cur_text = ch; // ch is already a String
+                cur_text = ch;
                 cur_style = style;
             }
         }
@@ -839,17 +855,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
         lines.push(Line::from(spans));
     }
 
-    // Render the screen content.
-    f.render_widget(Paragraph::new(Text::from(lines)), area);
-
-    // Position the cursor.
-    let (cursor_row, cursor_col) = screen.cursor_position();
-    if !screen.hide_cursor() && cursor_col < area.width && cursor_row < area.height {
-        f.set_cursor_position(Position {
-            x: area.x + cursor_col,
-            y: area.y + cursor_row,
-        });
-    }
+    lines
 }
 
 fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
@@ -858,6 +864,9 @@ fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default().fg(fg).bg(bg);
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.dim() {
+        style = style.add_modifier(Modifier::DIM);
     }
     if cell.italic() {
         style = style.add_modifier(Modifier::ITALIC);
@@ -1211,5 +1220,25 @@ mod tests {
         assert_eq!(scrollbar_position(0, 10, 4), 0);
         assert_eq!(scrollbar_position(6, 10, 4), 9);
         assert_eq!(scrollbar_position(20, 10, 4), 9);
+    }
+
+    #[test]
+    fn vt100_screen_lines_skip_wide_character_continuation_cells() {
+        let mut parser = vt100::Parser::new(1, 4, 0);
+
+        parser.process("表x".as_bytes());
+
+        let lines = vt100_screen_lines(parser.screen(), 1, 4);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "表x ");
+    }
+
+    #[test]
+    fn cell_to_ratatui_style_preserves_dim_attribute() {
+        let mut parser = vt100::Parser::new(1, 1, 0);
+
+        parser.process(b"\x1b[2md");
+        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
+
+        assert!(style.add_modifier.contains(Modifier::DIM));
     }
 }
