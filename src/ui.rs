@@ -873,7 +873,7 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
 }
 
 fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
-    let popup_height = area.height.saturating_sub(4).min(24).max(1);
+    let popup_height = area.height.saturating_sub(4).clamp(1, 24);
     let popup = centered_rect(70, popup_height, area);
     f.render_widget(Clear, popup);
 
