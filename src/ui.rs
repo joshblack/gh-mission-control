@@ -1041,6 +1041,22 @@ fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
 fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
     match color {
         vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(0) => Color::Black,
+        vt100::Color::Idx(1) => Color::Red,
+        vt100::Color::Idx(2) => Color::Green,
+        vt100::Color::Idx(3) => Color::Yellow,
+        vt100::Color::Idx(4) => Color::Blue,
+        vt100::Color::Idx(5) => Color::Magenta,
+        vt100::Color::Idx(6) => Color::Cyan,
+        vt100::Color::Idx(7) => Color::Gray,
+        vt100::Color::Idx(8) => Color::DarkGray,
+        vt100::Color::Idx(9) => Color::LightRed,
+        vt100::Color::Idx(10) => Color::LightGreen,
+        vt100::Color::Idx(11) => Color::LightYellow,
+        vt100::Color::Idx(12) => Color::LightBlue,
+        vt100::Color::Idx(13) => Color::LightMagenta,
+        vt100::Color::Idx(14) => Color::LightCyan,
+        vt100::Color::Idx(15) => Color::White,
         vt100::Color::Idx(n) => Color::Indexed(n),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
@@ -1423,5 +1439,50 @@ mod tests {
         assert!(style.add_modifier.contains(Modifier::ITALIC));
         assert!(style.add_modifier.contains(Modifier::UNDERLINED));
         assert!(style.add_modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn vt100_ansi_colors_use_ratatui_ansi_colors() {
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(0)), Color::Black);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(1)), Color::Red);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(2)), Color::Green);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(3)), Color::Yellow);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(4)), Color::Blue);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(5)), Color::Magenta);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(6)), Color::Cyan);
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(7)), Color::Gray);
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(8)),
+            Color::DarkGray
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(9)),
+            Color::LightRed
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(10)),
+            Color::LightGreen
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(11)),
+            Color::LightYellow
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(12)),
+            Color::LightBlue
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(13)),
+            Color::LightMagenta
+        );
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(14)),
+            Color::LightCyan
+        );
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Idx(15)), Color::White);
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(16)),
+            Color::Indexed(16)
+        );
     }
 }
