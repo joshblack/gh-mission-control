@@ -2,9 +2,13 @@ use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+const REMOTE_AGENT_GROUP: &str = "Remote agent tasks";
+const REMOTE_LOG_PREVIEW_BYTES: usize = 128 * 1024;
+const REMOTE_LOG_PREVIEW_LINES: usize = 200;
 
 // ── Status ──────────────────────────────────────────────────────────────────
 
@@ -27,12 +31,19 @@ impl SessionStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionSource {
+    Local,
+    Remote,
+}
+
 // ── Session model ────────────────────────────────────────────────────────────
 
 /// A Copilot CLI session read from `~/.copilot/session-state/<id>/workspace.yaml`.
 #[derive(Debug, Clone)]
 pub struct CopilotSession {
     pub id: String,
+    pub source: SessionSource,
     /// Working directory where the session was started
     pub cwd: PathBuf,
     /// Git root (may differ from cwd)
@@ -54,6 +65,11 @@ pub struct CopilotSession {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub status: SessionStatus,
+    pub remote_state: Option<String>,
+    pub remote_url: Option<String>,
+    pub remote_user: Option<String>,
+    pub pull_request: Option<String>,
+    pub remote_log: Option<String>,
 }
 
 impl CopilotSession {
@@ -155,6 +171,7 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     }
 
     // Sort newest-first by updated_at
+    sessions.extend(load_remote_agent_tasks());
     sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     sessions
 }
@@ -189,6 +206,9 @@ pub fn refresh_session_statuses_with_cache(
     let active_tmux_sessions = active_tmux_session_names();
 
     for session in sessions {
+        if session.source == SessionSource::Remote {
+            continue;
+        }
         session.status = detect_session_status_with_cache(
             copilot_dir,
             &db_path,
@@ -196,6 +216,283 @@ pub fn refresh_session_statuses_with_cache(
             &active_tmux_sessions,
             cache,
         );
+    }
+}
+
+fn load_remote_agent_tasks() -> Vec<CopilotSession> {
+    let fields = [
+        "completedAt",
+        "createdAt",
+        "id",
+        "name",
+        "pullRequestNumber",
+        "pullRequestState",
+        "pullRequestTitle",
+        "pullRequestUrl",
+        "repository",
+        "state",
+        "updatedAt",
+        "user",
+    ]
+    .join(",");
+    let output = Command::new("gh")
+        .args([
+            "agent-task",
+            "list",
+            "--json",
+            fields.as_str(),
+            "--limit",
+            "100",
+        ])
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let tasks = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout)
+        .ok()
+        .unwrap_or_default();
+
+    tasks
+        .into_iter()
+        .filter_map(remote_task_from_json)
+        .collect()
+}
+
+fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
+    let id = value_text(task.get("id"))?;
+    let repository = value_text(task.get("repository"));
+    let name = value_text(task.get("name"));
+    let state = value_text(task.get("state"));
+    let created_at = value_text(task.get("createdAt"))
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+    let updated_at = value_text(task.get("updatedAt"))
+        .or_else(|| value_text(task.get("completedAt")))
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or(created_at);
+    let pull_request = format_pull_request(
+        task.get("pullRequestNumber"),
+        task.get("pullRequestTitle"),
+        task.get("pullRequestState"),
+    );
+    let remote_description = pull_request.clone().or_else(|| {
+        state
+            .clone()
+            .map(|state| format!("Remote agent task ({state})"))
+    });
+
+    let pull_request_number = value_text(task.get("pullRequestNumber")).or_else(|| {
+        value_text(task.get("pullRequestUrl")).and_then(|url| pull_request_number_from_url(&url))
+    });
+    let remote_url = remote_task_url(repository.as_deref(), pull_request_number.as_deref(), &id);
+
+    Some(CopilotSession {
+        id,
+        source: SessionSource::Remote,
+        cwd: repository
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(REMOTE_AGENT_GROUP)),
+        git_root: None,
+        repository,
+        branch: None,
+        summary: name,
+        last_agent_message: remote_description,
+        user_named: false,
+        created_at,
+        updated_at,
+        status: remote_status(state.as_deref()),
+        remote_state: state,
+        remote_url,
+        remote_user: value_text(task.get("user")),
+        pull_request,
+        remote_log: None,
+    })
+}
+
+fn remote_task_url(
+    repository: Option<&str>,
+    pull_request_number: Option<&str>,
+    id: &str,
+) -> Option<String> {
+    let repository = repository?;
+    let pull_request_number = pull_request_number?;
+    let (owner, repo) = repository.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || pull_request_number.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "https://github.com/{owner}/{repo}/pull/{pull_request_number}/agent-sessions/{id}"
+    ))
+}
+
+fn pull_request_number_from_url(url: &str) -> Option<String> {
+    let number = url.split("/pull/").nth(1)?.split('/').next()?;
+    if number.is_empty() {
+        return None;
+    }
+    Some(number.to_string())
+}
+
+pub fn load_remote_task_log(session_id: &str) -> String {
+    let mut child = match Command::new("gh")
+        .args(["agent-task", "view", session_id, "--log"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return "Failed to run `gh agent-task view --log`.".to_string(),
+    };
+
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return "Failed to read remote task log.".to_string();
+    };
+    let stderr_handle = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut output = String::new();
+            let _ = stderr.read_to_string(&mut output);
+            output
+        })
+    });
+
+    let (output, truncated) = match read_remote_log_preview(stdout) {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = collect_remote_log_stderr(stderr_handle);
+            return "Failed to read remote task log.".to_string();
+        }
+    };
+
+    if truncated {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = collect_remote_log_stderr(stderr_handle);
+    } else {
+        let status = match child.wait() {
+            Ok(status) => status,
+            Err(_) => {
+                let _ = collect_remote_log_stderr(stderr_handle);
+                return "Failed to load remote task log.".to_string();
+            }
+        };
+        if !status.success() {
+            let stderr = sanitize_remote_log(&collect_remote_log_stderr(stderr_handle));
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                return format!("Failed to load remote task log: {status}");
+            }
+            return format!("Failed to load remote task log: {stderr}");
+        }
+        let _ = collect_remote_log_stderr(stderr_handle);
+    }
+
+    let mut log = sanitize_remote_log(&String::from_utf8_lossy(&output))
+        .trim()
+        .to_string();
+    if truncated {
+        if !log.is_empty() {
+            log.push('\n');
+        }
+        log.push_str("… (log preview truncated)");
+    }
+    log
+}
+
+fn read_remote_log_preview(stdout: impl Read) -> io::Result<(Vec<u8>, bool)> {
+    let mut reader = BufReader::new(stdout);
+    let mut output = Vec::new();
+    let mut bytes = 0;
+    let mut lines = 0;
+
+    loop {
+        if bytes >= REMOTE_LOG_PREVIEW_BYTES || lines >= REMOTE_LOG_PREVIEW_LINES {
+            return Ok((output, true));
+        }
+
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok((output, false));
+        }
+
+        let mut consumed = 0;
+        for &byte in buffer {
+            if bytes >= REMOTE_LOG_PREVIEW_BYTES || lines >= REMOTE_LOG_PREVIEW_LINES {
+                break;
+            }
+            output.push(byte);
+            bytes += 1;
+            consumed += 1;
+            if byte == b'\n' {
+                lines += 1;
+            }
+        }
+
+        reader.consume(consumed);
+    }
+}
+
+fn collect_remote_log_stderr(handle: Option<std::thread::JoinHandle<String>>) -> String {
+    handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default()
+}
+
+fn sanitize_remote_log(log: &str) -> String {
+    log.chars()
+        .filter(|ch| ch == &'\n' || ch == &'\t' || !ch.is_control())
+        .collect()
+}
+
+fn value_text(value: Option<&serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Object(map) => ["login", "name", "nameWithOwner", "url"]
+            .into_iter()
+            .find_map(|key| map.get(key).and_then(|value| value_text(Some(value)))),
+        _ => None,
+    }
+}
+
+fn format_pull_request(
+    number: Option<&serde_json::Value>,
+    title: Option<&serde_json::Value>,
+    state: Option<&serde_json::Value>,
+) -> Option<String> {
+    let number = value_text(number)?;
+    let title = value_text(title);
+    let state = value_text(state);
+    let mut label = format!("#{number}");
+    if let Some(title) = title {
+        label.push_str(&format!(" {title}"));
+    }
+    if let Some(state) = state {
+        label.push_str(&format!(" ({state})"));
+    }
+    Some(label)
+}
+
+fn remote_status(state: Option<&str>) -> SessionStatus {
+    match state.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "queued" | "pending" | "waiting" => SessionStatus::Waiting,
+        "in_progress" | "in-progress" | "running" | "started" => SessionStatus::Running,
+        "failed" | "failure" | "error" | "errored" | "cancelled" | "canceled" | "timed_out" => {
+            SessionStatus::Error
+        }
+        _ => SessionStatus::Idle,
     }
 }
 
@@ -298,6 +595,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
 
     Some(CopilotSession {
         id,
+        source: SessionSource::Local,
         cwd,
         git_root,
         repository,
@@ -308,6 +606,11 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         created_at,
         updated_at,
         status: SessionStatus::Idle, // will be updated by caller
+        remote_state: None,
+        remote_url: None,
+        remote_user: None,
+        pull_request: None,
+        remote_log: None,
     })
 }
 
@@ -645,6 +948,105 @@ mod tests {
             detect_session_status_from_event_content(content),
             Some(SessionStatus::Running)
         );
+    }
+
+    #[test]
+    fn remote_task_from_json_builds_remote_session() {
+        let task = serde_json::json!({
+            "id": "task-1",
+            "name": "Fix remote bug",
+            "repository": { "nameWithOwner": "owner/repo" },
+            "state": "in_progress",
+            "createdAt": "2026-05-08T10:00:00Z",
+            "updatedAt": "2026-05-08T11:00:00Z",
+            "pullRequestNumber": 42,
+            "pullRequestTitle": "Fix remote bug",
+            "pullRequestState": "OPEN",
+            "pullRequestUrl": "https://github.com/owner/repo/pull/42",
+            "user": { "login": "octocat" }
+        });
+
+        let session = remote_task_from_json(task).expect("remote task should parse");
+
+        assert_eq!(session.source, SessionSource::Remote);
+        assert_eq!(session.status, SessionStatus::Running);
+        assert_eq!(session.repository.as_deref(), Some("owner/repo"));
+        assert_eq!(session.display_name(), "Fix remote bug");
+        assert_eq!(session.remote_user.as_deref(), Some("octocat"));
+        assert_eq!(
+            session.remote_url.as_deref(),
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
+        );
+        assert_eq!(
+            session.pull_request.as_deref(),
+            Some("#42 Fix remote bug (OPEN)")
+        );
+    }
+
+    #[test]
+    fn remote_task_url_requires_owner_repo_and_pull_request() {
+        assert_eq!(
+            remote_task_url(Some("owner/repo"), Some("42"), "task-1").as_deref(),
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
+        );
+        assert_eq!(remote_task_url(None, Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("repo"), Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/"), Some("42"), "task-1"), None);
+        assert_eq!(remote_task_url(Some("owner/repo"), None, "task-1"), None);
+        assert_eq!(
+            remote_task_url(Some("owner/repo"), Some(""), "task-1"),
+            None
+        );
+        assert_eq!(remote_task_url(Some("owner/repo"), Some("42"), ""), None);
+    }
+
+    #[test]
+    fn remote_task_url_uses_pull_request_url_when_number_missing() {
+        let task = serde_json::json!({
+            "id": "task-1",
+            "repository": "owner/repo",
+            "pullRequestUrl": "https://github.com/owner/repo/pull/42",
+        });
+
+        let session = remote_task_from_json(task).expect("remote task should parse");
+
+        assert_eq!(
+            session.remote_url.as_deref(),
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/task-1")
+        );
+    }
+
+    #[test]
+    fn remote_log_preview_limits_lines() {
+        let log = (0..REMOTE_LOG_PREVIEW_LINES + 10)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+
+        let (preview, truncated) = read_remote_log_preview(log.as_bytes()).unwrap();
+
+        assert!(truncated);
+        assert_eq!(
+            String::from_utf8(preview).unwrap().lines().count(),
+            REMOTE_LOG_PREVIEW_LINES
+        );
+    }
+
+    #[test]
+    fn remote_log_preview_limits_bytes() {
+        let log = vec![b'a'; REMOTE_LOG_PREVIEW_BYTES + 10];
+
+        let (preview, truncated) = read_remote_log_preview(log.as_slice()).unwrap();
+
+        assert!(truncated);
+        assert_eq!(preview.len(), REMOTE_LOG_PREVIEW_BYTES);
+    }
+
+    #[test]
+    fn sanitize_remote_log_removes_control_characters() {
+        let sanitized = sanitize_remote_log("start\u{1b}[31m red\u{0} text\nnext\tline");
+
+        assert_eq!(sanitized, "start[31m red text\nnext\tline");
+        assert!(!sanitized.contains('\u{1b}'));
     }
 
     #[test]

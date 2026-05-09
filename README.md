@@ -1,12 +1,21 @@
 # gh-mission-control
 
-A **terminal session manager for AI coding agents** — a `gh` extension written in Rust.
+`gh mission-control` is a GitHub CLI extension for managing GitHub Copilot CLI
+sessions from a terminal UI.
 
-`gh mission-control` gives you a beautiful TUI to manage all your [GitHub Copilot](https://github.com/features/copilot) agent sessions at once. It reads directly from the Copilot CLI's session store (`~/.copilot/session-state/`) so every session you've ever started automatically appears here — no setup required.
+It reads Copilot's local session files, shows recent sessions and remote agent
+tasks, and lets you open or start Copilot sessions without leaving the UI.
 
----
+## What it does
 
-## Features
+- Lists local Copilot CLI sessions from `~/.copilot/session-state/`
+- Shows session title, directory, repository, branch, status, and recent activity
+- Reads conversation history from `~/.copilot/session-store.db`
+- Opens local sessions in an embedded Copilot terminal backed by `tmux`
+- Starts a new Copilot session in the current directory or another path
+- Polls active sessions for Running, Waiting, Idle, and Error status changes
+- Lists remote agent tasks from `gh agent-task list` when that command is
+  available
 
 - **Reads real Copilot CLI sessions** from `~/.copilot/session-state/` — no extra configuration
 - **Split-pane TUI** — sessions list on the left, session detail/conversation on the right
@@ -20,23 +29,38 @@ A **terminal session manager for AI coding agents** — a `gh` extension written
 - **Reload** — `r` to refresh from disk at any time
 - **Shortcut help** — `?` shows a scrollable shortcut reference
 
----
+Remote agent tasks are shown for visibility, but they cannot be opened in the
+local embedded terminal.
 
-## Installation
+## Requirements
 
-### As a `gh` extension
+- [GitHub CLI](https://cli.github.com/)
+- GitHub Copilot CLI available as `copilot` (for example, via `gh copilot`)
+- `tmux`, used for embedded Copilot terminals
+- Rust and Cargo, only if building from source
+
+Remote agent tasks require an authenticated GitHub CLI with `gh agent-task list`
+support.
+
+## Install and start
+
+Install as a `gh` extension:
 
 ```sh
 gh extension install joshblack/gh-mission-control
 ```
 
-Then run:
+`gh extension install` downloads the prebuilt binary from the latest GitHub
+Release for your platform. Releases are published automatically when a `v*` tag
+is pushed.
+
+Start the UI:
 
 ```sh
 gh mission-control
 ```
 
-### Build from source
+Build and run from source:
 
 ```sh
 git clone https://github.com/joshblack/gh-mission-control
@@ -45,59 +69,42 @@ cargo build --release
 ./target/release/gh-mission-control
 ```
 
----
-
-## Requirements
-
-- [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — install with `gh copilot`
-- [tmux](https://github.com/tmux/tmux/wiki) — used to keep embedded Copilot sessions alive after detach
-- Sessions are stored in `~/.copilot/session-state/` (created automatically when you run `copilot`)
-
----
-
-## Key Bindings
-
-### Sessions panel (left)
+## Usage
 
 | Key | Action |
-|-----|--------|
-| `j` / `↓` | Move selection down |
-| `k` / `↑` | Move selection up |
-| `Enter` / `Space` | View session detail |
-| `o` | Open/resume in Copilot |
-| `n` | Launch new Copilot session |
+| --- | --- |
+| `j` / `Down` | Move down or scroll down |
+| `k` / `Up` | Move up or scroll up |
+| `Enter` / `Space` | View the selected session |
+| `o` | Open or resume the selected local session in Copilot |
+| `n` | Start a new Copilot session |
 | `r` | Reload sessions from disk |
-| `?` | Show shortcut help |
-| `q` | Quit |
+| `?` | Show or hide shortcut help |
+| `q` | Quit from normal mode |
+| `Ctrl+C` | Quit |
 
-### Detail panel (right)
-
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Scroll conversation down |
-| `k` / `↑` | Scroll conversation up |
-| `o` | Open/resume in Copilot |
-| `Esc` / `h` / `←` | Return to sessions list |
-| `n` | Launch new Copilot session |
-| `?` | Show shortcut help |
-| `q` | Quit |
-
-### New session prompt
+When an embedded Copilot terminal is open:
 
 | Key | Action |
-|-----|--------|
-| `Enter` | Launch `copilot -C <dir>` |
-| `Esc` | Cancel |
-| Type | Edit the directory path |
+| --- | --- |
+| `Ctrl+F` | Toggle fullscreen |
+| `Ctrl+W` | Detach from the embedded session |
+| Mouse input | Forwarded to Copilot while fullscreen |
 
-### Shortcut help
+When starting a new session, the prompt is pre-filled with the current session's
+directory when one is selected. Otherwise it uses the directory where
+`gh mission-control` was started.
 
-| Key | Action |
-|-----|--------|
-| `j` / `↓` / scroll | Scroll down |
-| `k` / `↑` / scroll | Scroll up |
-| `PageDown` / `PageUp` | Scroll by page |
-| `Esc` / `q` / `?` | Close |
+## Data sources
+
+`gh-mission-control` reads Copilot data from:
+
+- `~/.copilot/session-state/<id>/workspace.yaml` for local session metadata
+- `~/.copilot/session-state/<id>/events.jsonl` for live session status
+- `~/.copilot/session-store.db` for session summaries and conversation history
+- `gh agent-task list --json ...` for remote agent tasks
+
+Local sessions are shown when they have been active within the last seven days.
 
 ### Embedded terminal
 
@@ -108,40 +115,3 @@ cargo build --release
 | Other keys | Forward input to Copilot |
 
 Embedded terminals are tmux clients. Detaching closes only the in-app terminal view; the backing Copilot process keeps running in its tmux session so it can be resumed later.
-
----
-
-## Session storage
-
-Sessions are stored by the Copilot CLI itself. `gh-mission-control` reads from:
-
-- **Session metadata**: `~/.copilot/session-state/<id>/workspace.yaml`
-- **Conversation history**: `~/.copilot/session-store.db` (SQLite)
-
-### `workspace.yaml` structure
-
-```yaml
-id: <uuid>
-cwd: /path/to/project
-git_root: /path/to/project
-repository: owner/repo
-branch: feature/my-feature
-user_named: false
-created_at: 2024-01-15T10:30:00Z
-updated_at: 2024-01-15T11:45:00Z
-```
-
-### Launching sessions from the CLI
-
-You can also launch sessions directly with the Copilot CLI:
-
-```sh
-# Start a new session in the current directory
-copilot
-
-# Start a named session
-copilot --name="my feature"
-
-# Resume a previous session
-copilot --resume=<session-id>
-```
