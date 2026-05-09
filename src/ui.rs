@@ -859,6 +859,9 @@ fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
     }
+    if cell.dim() {
+        style = style.add_modifier(Modifier::DIM);
+    }
     if cell.italic() {
         style = style.add_modifier(Modifier::ITALIC);
     }
@@ -1211,5 +1214,17 @@ mod tests {
         assert_eq!(scrollbar_position(0, 10, 4), 0);
         assert_eq!(scrollbar_position(6, 10, 4), 9);
         assert_eq!(scrollbar_position(20, 10, 4), 9);
+    }
+
+    #[test]
+    fn vt100_cell_dim_attribute_maps_to_ratatui_dim_modifier() {
+        let mut parser = vt100::Parser::new(1, 1, 0);
+        parser.process(b"\x1b[2mf");
+        let screen = parser.screen();
+        let cell = screen.cell(0, 0).expect("cell should exist");
+
+        let style = cell_to_ratatui_style(cell);
+
+        assert!(style.add_modifier.contains(Modifier::DIM));
     }
 }
