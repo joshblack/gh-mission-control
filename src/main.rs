@@ -24,8 +24,8 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal::{
-    attach_tmux_session, ensure_tmux_session, key_to_bytes, mouse_to_bytes, reuse_tmux_session,
-    EmbeddedTerminal,
+    attach_tmux_session, ensure_tmux_session, key_to_bytes, kill_all_tmux_sessions,
+    kill_tmux_session_for_id, mouse_to_bytes, reuse_tmux_session, EmbeddedTerminal,
 };
 
 fn main() -> Result<()> {
@@ -202,6 +202,42 @@ where
                     }
                     Err(e) => {
                         app.status_message = Some(format!("Failed to open remote task: {e}"));
+                    }
+                }
+                status_since = Some(Instant::now());
+            }
+            PendingAction::CloseSession { id } => {
+                match kill_tmux_session_for_id(&id) {
+                    Ok(()) => {
+                        if app
+                            .embedded_terminal
+                            .as_ref()
+                            .is_some_and(|term| term.session_id == id)
+                        {
+                            app.embedded_terminal = None;
+                            app.mode = Mode::Normal;
+                            app.terminal_fullscreen = false;
+                        }
+                        app.reload();
+                        app.status_message = Some("Closed tmux session".into());
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Failed to close tmux session: {e}"));
+                    }
+                }
+                status_since = Some(Instant::now());
+            }
+            PendingAction::CloseAllSessions => {
+                match kill_all_tmux_sessions() {
+                    Ok(count) => {
+                        app.embedded_terminal = None;
+                        app.mode = Mode::Normal;
+                        app.terminal_fullscreen = false;
+                        app.reload();
+                        app.status_message = Some(format!("Closed {count} tmux session(s)"));
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Failed to close tmux sessions: {e}"));
                     }
                 }
                 status_since = Some(Instant::now());
@@ -453,6 +489,10 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         app.clear_directory_filter();
         return;
     }
+    if key == KeyCode::Char('x') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.close_all_sessions();
+        return;
+    }
 
     match app.active_panel {
         Panel::Sessions => match key {
@@ -464,6 +504,7 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Enter | KeyCode::Char(' ') => app.select_current(),
             KeyCode::Char('o') => app.open_session_native(),
             KeyCode::Char('e') => app.open_session_embedded(),
+            KeyCode::Char('x') => app.close_selected_session(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
             _ => {}
@@ -477,6 +518,7 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.focus_sessions(),
             KeyCode::Char('o') => app.open_session_native(),
             KeyCode::Char('e') => app.open_session_embedded(),
+            KeyCode::Char('x') => app.close_selected_session(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
             _ => {}
@@ -572,6 +614,16 @@ fn handle_terminal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         app.toggle_terminal_fullscreen();
         return;
     }
+    // Ctrl+Q closes the backing tmux session instead of only detaching.
+    if key == KeyCode::Char('q') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.close_embedded_terminal_session();
+        return;
+    }
+    // Ctrl+X closes every gh-pilot managed tmux session.
+    if key == KeyCode::Char('x') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.close_all_sessions();
+        return;
+    }
     // Forward all other keys as byte sequences to the PTY.
     let bytes = key_to_bytes(key, modifiers);
     if !bytes.is_empty() {
@@ -614,6 +666,18 @@ mod tests {
         handle_normal(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
 
         assert_eq!(app.mode, Mode::DirectoryFilter);
+    }
+
+    #[test]
+    fn ctrl_x_queues_close_all_sessions() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        handle_normal(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL);
+
+        assert!(matches!(
+            app.pending_action,
+            PendingAction::CloseAllSessions
+        ));
     }
 
     #[test]

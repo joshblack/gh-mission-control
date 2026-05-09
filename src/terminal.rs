@@ -380,6 +380,42 @@ pub fn reuse_tmux_session(tmux_session: &str, session_id: &str) -> anyhow::Resul
     })
 }
 
+pub fn kill_tmux_session_for_id(session_id: &str) -> anyhow::Result<()> {
+    kill_tmux_session(&tmux_session_name(session_id))
+}
+
+pub fn kill_all_tmux_sessions() -> anyhow::Result<usize> {
+    let output = Command::new("tmux")
+        .arg("list-sessions")
+        .arg("-F")
+        .arg("#{session_name}")
+        .stderr(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("tmux list-sessions exited with {}", output.status);
+    }
+
+    let sessions = pilot_tmux_sessions_from_output(&output.stdout);
+    let mut killed = 0;
+    for session in sessions {
+        kill_tmux_session(&session)?;
+        killed += 1;
+    }
+    Ok(killed)
+}
+
+fn kill_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
+    let status = Command::new("tmux")
+        .arg("kill-session")
+        .arg("-t")
+        .arg(tmux_session)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("tmux kill-session exited with {status}");
+    }
+    Ok(())
+}
+
 fn configure_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
     let status = Command::new("tmux")
         .arg("set-option")
@@ -398,6 +434,14 @@ fn configure_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
         anyhow::bail!("tmux set-option exited with {status}");
     }
     Ok(())
+}
+
+fn pilot_tmux_sessions_from_output(output: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn title_from_tmux_output(output: &[u8]) -> Option<String> {
@@ -602,6 +646,14 @@ mod tests {
             Some("Updated Copilot Title")
         );
         assert_eq!(title_from_tmux_output(b" \n"), None);
+    }
+
+    #[test]
+    fn pilot_tmux_sessions_from_output_filters_to_gh_pilot_sessions() {
+        assert_eq!(
+            pilot_tmux_sessions_from_output(b"ghpilot_one\nother\nghpilot_two\n"),
+            vec!["ghpilot_one".to_string(), "ghpilot_two".to_string()]
+        );
     }
 
     #[test]

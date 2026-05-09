@@ -26,6 +26,8 @@ Interact with sessions using arrow keys or j/k momvement. You can also view all 
 
 When launching a copilot session, it will open the CLI in a new tmux session. To leave the session, use <kbd>Ctrl+b</kbd> (your tmux leader key) and then <kbd>d</kbd> to detach. You can also `/quit` and it will return you to the main session list.
 
+Use <kbd>x</kbd> on a local session to close its backing tmux session, or <kbd>Ctrl+X</kbd> to close all active gh-pilot tmux sessions. While an embedded terminal is focused, <kbd>Ctrl+Q</kbd> closes the backing tmux session and <kbd>Ctrl+W</kbd> only detaches from it.
+
 ## Requirements
 
 - [GitHub CLI](https://cli.github.com/)

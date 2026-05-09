@@ -92,6 +92,12 @@ pub enum PendingAction {
     OpenRemoteTask {
         url: String,
     },
+    /// Close a tmux session for a local Copilot session.
+    CloseSession {
+        id: String,
+    },
+    /// Close every gh-pilot managed tmux session.
+    CloseAllSessions,
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -592,6 +598,30 @@ impl App {
         self.mode = Mode::Normal;
         self.terminal_fullscreen = false;
         self.status_message = Some("Detached; Copilot continues in tmux".into());
+    }
+
+    pub fn close_selected_session(&mut self) {
+        if let Some(idx) = self.selected_session.or_else(|| self.session_at_cursor()) {
+            if self.sessions[idx].source == SessionSource::Remote {
+                self.status_message = Some("Remote tasks cannot be closed from gh-pilot".into());
+                return;
+            }
+            self.pending_action = PendingAction::CloseSession {
+                id: self.sessions[idx].id.clone(),
+            };
+        }
+    }
+
+    pub fn close_embedded_terminal_session(&mut self) {
+        if let Some(term) = &self.embedded_terminal {
+            self.pending_action = PendingAction::CloseSession {
+                id: term.session_id.clone(),
+            };
+        }
+    }
+
+    pub fn close_all_sessions(&mut self) {
+        self.pending_action = PendingAction::CloseAllSessions;
     }
 
     pub fn toggle_terminal_fullscreen(&mut self) {
@@ -1460,5 +1490,42 @@ mod tests {
             PendingAction::OpenEmbedded { ref id, .. } => assert_eq!(id, "local"),
             _ => panic!("expected embedded terminal action"),
         }
+    }
+
+    #[test]
+    fn closing_local_session_queues_close_action() {
+        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+
+        app.close_selected_session();
+
+        match app.pending_action {
+            PendingAction::CloseSession { ref id } => assert_eq!(id, "local"),
+            _ => panic!("expected close session action"),
+        }
+    }
+
+    #[test]
+    fn closing_remote_session_shows_status_without_queueing_close_action() {
+        let mut app = app_with_sessions(vec![session("remote", SessionSource::Remote)]);
+
+        app.close_selected_session();
+
+        assert!(matches!(app.pending_action, PendingAction::None));
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Remote tasks cannot be closed from gh-pilot")
+        );
+    }
+
+    #[test]
+    fn closing_all_sessions_queues_close_all_action() {
+        let mut app = app_with_sessions(vec![]);
+
+        app.close_all_sessions();
+
+        assert!(matches!(
+            app.pending_action,
+            PendingAction::CloseAllSessions
+        ));
     }
 }

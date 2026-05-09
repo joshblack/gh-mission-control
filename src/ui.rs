@@ -909,7 +909,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::Terminal => (
-            "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot".to_string(),
+            "Fullscreen: Ctrl+F  Detach: Ctrl+W  Close: Ctrl+Q  Close all: Ctrl+X".to_string(),
             Style::default().fg(RUNNING_COLOR),
         ),
         Mode::Help => (
@@ -951,9 +951,11 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 } else {
                     shortcuts.push(("Native", "o"));
                     shortcuts.push(("Preview", "e"));
+                    shortcuts.push(("Close", "x"));
                 }
             }
             shortcuts.push(("New", "n"));
+            shortcuts.push(("Close all", "Ctrl+X"));
             shortcuts.push(("Help", "?"));
             shortcuts
         }
@@ -965,9 +967,11 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 } else {
                     shortcuts.push(("Native", "o"));
                     shortcuts.push(("Preview", "e"));
+                    shortcuts.push(("Close", "x"));
                 }
             }
             shortcuts.push(("New", "n"));
+            shortcuts.push(("Close all", "Ctrl+X"));
             shortcuts.push(("Help", "?"));
             shortcuts
         }
@@ -1097,6 +1101,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("Tab / Shift+Tab", "Switch session status tabs"),
         help_shortcut("/", "Filter sessions by directory"),
         help_shortcut("Ctrl+U", "Clear the directory filter"),
+        help_shortcut("Ctrl+X", "Close all gh-pilot tmux sessions"),
         help_shortcut("q", "Quit from normal mode"),
         help_shortcut("Ctrl+C", "Quit"),
         Line::from(""),
@@ -1106,6 +1111,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("Enter / Space", "View the selected session"),
         help_shortcut("o", "Attach to the session in the native terminal"),
         help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("x", "Close the selected tmux session"),
         help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
@@ -1116,12 +1122,15 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("h / ← / Esc", "Return to the sessions panel"),
         help_shortcut("o", "Attach to the session in the native terminal"),
         help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("x", "Close the selected tmux session"),
         help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Embedded terminal"),
         help_shortcut("Ctrl+F", "Toggle fullscreen"),
         help_shortcut("Ctrl+W", "Detach from the embedded session"),
+        help_shortcut("Ctrl+Q", "Close the backing tmux session"),
+        help_shortcut("Ctrl+X", "Close all gh-pilot tmux sessions"),
         help_shortcut("Mouse", "Forwarded to Copilot while fullscreen"),
         Line::from(""),
         help_heading("New session prompt"),
