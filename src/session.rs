@@ -1,5 +1,5 @@
 use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,11 +47,14 @@ pub struct CopilotSession {
     #[allow(dead_code)]
     pub git_root: Option<PathBuf>,
     /// GitHub repository (e.g., "owner/repo")
+    #[allow(dead_code)]
     pub repository: Option<String>,
     /// Current git branch
     pub branch: Option<String>,
     /// Auto-generated or user-provided summary / name
     pub summary: Option<String>,
+    /// Last assistant response, used as a one-line session description
+    pub last_agent_message: Option<String>,
     /// Whether the user explicitly named this session
     #[allow(dead_code)]
     pub user_named: bool,
@@ -67,7 +70,7 @@ pub struct CopilotSession {
 
 impl CopilotSession {
     /// Display name for this session.
-    /// Priority: user summary → branch → last cwd component → id prefix.
+    /// Priority: workspace title/summary → branch → last cwd component → id prefix.
     pub fn display_name(&self) -> String {
         if let Some(ref s) = self.summary {
             let first = s.lines().next().unwrap_or("").trim();
@@ -85,17 +88,6 @@ impl CopilotSession {
             .and_then(|n| n.to_str())
             .unwrap_or(&self.id[..8])
             .to_string()
-    }
-
-    /// Key used for grouping (the cwd path, shortened for display).
-    pub fn group_key(&self) -> String {
-        if self.source == SessionSource::Remote {
-            return self
-                .repository
-                .clone()
-                .unwrap_or_else(|| REMOTE_AGENT_GROUP.to_string());
-        }
-        self.cwd.to_string_lossy().to_string()
     }
 }
 
@@ -133,6 +125,7 @@ pub fn session_db_path(copilot_dir: &Path) -> PathBuf {
 pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let state_dir = session_state_dir(copilot_dir);
     let db_path = session_db_path(copilot_dir);
+    let oldest_active = Utc::now() - Duration::days(7);
     let active_tmux_sessions = active_tmux_session_names();
 
     let mut sessions = Vec::new();
@@ -153,8 +146,14 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
         }
         if let Ok(content) = fs::read_to_string(&workspace) {
             if let Some(mut session) = parse_workspace_yaml(&content) {
-                // Try to enrich with summary from SQLite
-                session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
+                if session.updated_at < oldest_active {
+                    continue;
+                }
+                // Try to enrich with summary from SQLite when workspace.yaml has no title/summary.
+                if session.summary.is_none() {
+                    session.summary = load_summary_from_db(&db_path, &session.id);
+                }
+                session.last_agent_message = load_last_agent_message_from_db(&db_path, &session.id);
                 session.status = detect_session_status(
                     copilot_dir,
                     &db_path,
@@ -250,6 +249,11 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
         task.get("pullRequestTitle"),
         task.get("pullRequestState"),
     );
+    let remote_description = pull_request.clone().or_else(|| {
+        state
+            .clone()
+            .map(|state| format!("Remote agent task ({state})"))
+    });
 
     Some(CopilotSession {
         id,
@@ -262,6 +266,7 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
         repository,
         branch: None,
         summary: name,
+        last_agent_message: remote_description,
         user_named: false,
         created_at,
         updated_at,
@@ -339,26 +344,6 @@ pub fn load_turns(db_path: &Path, session_id: &str) -> Vec<Turn> {
     .unwrap_or_default()
 }
 
-/// Group sessions by their `cwd`, preserving newest-first order within each group.
-/// Returns `(group_key, [indices into sessions])` pairs.
-pub fn group_sessions(sessions: &[CopilotSession]) -> Vec<(String, Vec<usize>)> {
-    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-    let mut group_index: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-
-    for (i, session) in sessions.iter().enumerate() {
-        let key = session.group_key();
-        if let Some(&gi) = group_index.get(&key) {
-            groups[gi].1.push(i);
-        } else {
-            let gi = groups.len();
-            group_index.insert(key.clone(), gi);
-            groups.push((key, vec![i]));
-        }
-    }
-    groups
-}
-
 // ── Copilot binary ────────────────────────────────────────────────────────────
 
 /// Find the copilot binary: prefers `~/.local/share/gh/copilot/copilot`, then PATH.
@@ -424,8 +409,11 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or(created_at);
 
-    // summary_count can guide us but the actual summary comes from the DB
-    let summary = None;
+    // Use the title/summary fields present in workspace.yaml before DB summaries.
+    let summary = map
+        .get("title")
+        .or_else(|| map.get("summary"))
+        .map(|s| s.to_string());
 
     Some(CopilotSession {
         id,
@@ -435,6 +423,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         repository,
         branch,
         summary,
+        last_agent_message: None,
         user_named,
         created_at,
         updated_at,
@@ -457,6 +446,20 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
     .ok()
     .flatten()
     .filter(|s| !s.is_empty())
+}
+
+fn load_last_agent_message_from_db(db_path: &Path, session_id: &str) -> Option<String> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    conn.query_row(
+        "SELECT assistant_response FROM turns \
+         WHERE session_id = ? AND assistant_response IS NOT NULL AND assistant_response != '' \
+         ORDER BY turn_index DESC LIMIT 1",
+        [session_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .filter(|s| !s.trim().is_empty())
 }
 
 fn detect_session_status(
@@ -642,6 +645,7 @@ fn active_tmux_session_names() -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn event_status_reports_running_for_active_turn() {
@@ -696,7 +700,7 @@ mod tests {
 
         assert_eq!(session.source, SessionSource::Remote);
         assert_eq!(session.status, SessionStatus::Running);
-        assert_eq!(session.group_key(), "owner/repo");
+        assert_eq!(session.repository.as_deref(), Some("owner/repo"));
         assert_eq!(session.display_name(), "Fix remote bug");
         assert_eq!(session.remote_user.as_deref(), Some("octocat"));
         assert_eq!(
@@ -714,5 +718,50 @@ mod tests {
             detect_session_status_from_event_content(content),
             Some(SessionStatus::Waiting)
         );
+    }
+
+    #[test]
+    fn load_sessions_prefers_workspace_title_over_db_summary() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ghmc-session-test-{unique}"));
+        let session_id = "12345678-1234-1234-1234-123456789abc";
+        let session_dir = root.join("session-state").join(session_id);
+        fs::create_dir_all(&session_dir).unwrap();
+
+        let timestamp = Utc::now().to_rfc3339();
+        fs::write(
+            session_dir.join("workspace.yaml"),
+            format!(
+                "id: {session_id}\n\
+                 cwd: /tmp/example\n\
+                 branch: feature\n\
+                 title: Workspace Title\n\
+                 summary: Workspace Summary\n\
+                 created_at: {timestamp}\n\
+                 updated_at: {timestamp}\n"
+            ),
+        )
+        .unwrap();
+
+        let conn = rusqlite::Connection::open(root.join("session-store.db")).unwrap();
+        conn.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, summary TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, summary) VALUES (?1, ?2)",
+            (session_id, "Database Summary"),
+        )
+        .unwrap();
+
+        let sessions = load_sessions(&root);
+
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].display_name(), "Workspace Title");
     }
 }
