@@ -172,11 +172,11 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
 
     // Sort newest-first by updated_at
     sessions.extend(load_remote_agent_tasks());
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
     sessions
 }
 
-/// Refresh status for already-loaded sessions using active gh-mission-control tmux sessions.
+/// Refresh status for already-loaded sessions using active gh-pilot tmux sessions.
 pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSession]) {
     let db_path = session_db_path(copilot_dir);
     let active_tmux_sessions = active_tmux_session_names();
@@ -649,15 +649,14 @@ fn detect_session_status_from_event_content(content: &str) -> Option<SessionStat
                 pending_permissions.clear();
                 saw_error = false;
             }
-            "assistant.turn_end" => {
+            "assistant.turn_end"
                 if active_turn.as_deref()
                     == data
                         .and_then(|data| data.get("turnId"))
-                        .and_then(|value| value.as_str())
-                {
-                    active_turn = None;
-                    pending_permissions.clear();
-                }
+                        .and_then(|value| value.as_str()) =>
+            {
+                active_turn = None;
+                pending_permissions.clear();
             }
             "permission.requested" => {
                 if let Some(request_id) = data
@@ -675,14 +674,13 @@ fn detect_session_status_from_event_content(content: &str) -> Option<SessionStat
                     pending_permissions.remove(request_id);
                 }
             }
-            "tool.execution_complete" => {
+            "tool.execution_complete"
                 if data
                     .and_then(|data| data.get("success"))
                     .and_then(|value| value.as_bool())
-                    .is_some_and(|success| !success)
-                {
-                    saw_error = true;
-                }
+                    .is_some_and(|success| !success) =>
+            {
+                saw_error = true;
             }
             _ if event_type.ends_with(".error") => {
                 saw_error = true;
@@ -880,7 +878,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("ghmc-session-test-{unique}"));
+        let root = std::env::temp_dir().join(format!("ghp-session-test-{unique}"));
         let session_id = "12345678-1234-1234-1234-123456789abc";
         let session_dir = root.join("session-state").join(session_id);
         fs::create_dir_all(&session_dir).unwrap();
@@ -915,7 +913,10 @@ mod tests {
         let sessions = load_sessions(&root);
 
         fs::remove_dir_all(&root).unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].display_name(), "Workspace Title");
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .unwrap();
+        assert_eq!(session.display_name(), "Workspace Title");
     }
 }

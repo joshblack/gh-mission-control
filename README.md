@@ -1,6 +1,6 @@
-# gh-mission-control
+# gh-pilot
 
-`gh mission-control` is a GitHub CLI extension for managing GitHub Copilot CLI
+`gh pilot` is a GitHub CLI extension for managing GitHub Copilot CLI
 sessions from a terminal UI.
 
 It reads Copilot's local session files, shows recent sessions and remote agent
@@ -35,22 +35,22 @@ support.
 Install as a `gh` extension:
 
 ```sh
-gh extension install joshblack/gh-mission-control
+gh extension install joshblack/gh-pilot
 ```
 
 Start the UI:
 
 ```sh
-gh mission-control
+gh pilot
 ```
 
 Build and run from source:
 
 ```sh
-git clone https://github.com/joshblack/gh-mission-control
-cd gh-mission-control
+git clone https://github.com/joshblack/gh-pilot
+cd gh-pilot
 cargo build --release
-./target/release/gh-mission-control
+./target/release/gh-pilot
 ```
 
 ## Usage
@@ -77,11 +77,11 @@ When an embedded Copilot terminal is open:
 
 When starting a new session, the prompt is pre-filled with the current session's
 directory when one is selected. Otherwise it uses the directory where
-`gh mission-control` was started.
+`gh pilot` was started.
 
 ## Data sources
 
-`gh-mission-control` reads Copilot data from:
+`gh-pilot` reads Copilot data from:
 
 - `~/.copilot/session-state/<id>/workspace.yaml` for local session metadata
 - `~/.copilot/session-state/<id>/events.jsonl` for live session status
