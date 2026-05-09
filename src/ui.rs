@@ -1002,6 +1002,7 @@ fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTermina
 fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
     let parser = term.parser();
     let screen = parser.screen();
+    let palette = parser.callbacks().palette();
 
     let rows = area.height as usize;
     let cols = area.width as usize;
@@ -1023,7 +1024,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
                     } else {
                         c.to_string()
                     };
-                    (ch, cell_to_ratatui_style(cell))
+                    (ch, cell_to_ratatui_style(cell, palette))
                 }
                 None => (" ".to_string(), Style::default()),
             };
@@ -1057,9 +1058,9 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
     }
 }
 
-fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
-    let fg = vt100_color_to_ratatui(cell.fgcolor());
-    let bg = vt100_color_to_ratatui(cell.bgcolor());
+fn cell_to_ratatui_style(cell: &vt100::Cell, palette: &crate::terminal::TerminalPalette) -> Style {
+    let fg = vt100_fg_color_to_ratatui(cell.fgcolor(), palette);
+    let bg = vt100_bg_color_to_ratatui(cell.bgcolor(), palette);
     let mut style = Style::default().fg(fg).bg(bg);
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
@@ -1100,6 +1101,40 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
         vt100::Color::Idx(15) => Color::White,
         vt100::Color::Idx(n) => Color::Indexed(n),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+fn vt100_fg_color_to_ratatui(
+    color: vt100::Color,
+    palette: &crate::terminal::TerminalPalette,
+) -> Color {
+    match color {
+        vt100::Color::Default => palette
+            .default_fg
+            .map(vt100_color_to_ratatui)
+            .unwrap_or(Color::Reset),
+        vt100::Color::Idx(index) => palette
+            .indexed_color(index)
+            .map(vt100_color_to_ratatui)
+            .unwrap_or_else(|| vt100_color_to_ratatui(color)),
+        vt100::Color::Rgb(_, _, _) => vt100_color_to_ratatui(color),
+    }
+}
+
+fn vt100_bg_color_to_ratatui(
+    color: vt100::Color,
+    palette: &crate::terminal::TerminalPalette,
+) -> Color {
+    match color {
+        vt100::Color::Default => palette
+            .default_bg
+            .map(vt100_color_to_ratatui)
+            .unwrap_or(Color::Reset),
+        vt100::Color::Idx(index) => palette
+            .indexed_color(index)
+            .map(vt100_color_to_ratatui)
+            .unwrap_or_else(|| vt100_color_to_ratatui(color)),
+        vt100::Color::Rgb(_, _, _) => vt100_color_to_ratatui(color),
     }
 }
 
@@ -1463,27 +1498,41 @@ mod tests {
     #[test]
     fn cell_style_preserves_dim_attribute() {
         let mut parser = vt100::Parser::new(1, 8, 0);
+        let palette = crate::terminal::TerminalPalette::default();
 
         parser.process(b"\x1b[2mmuted\x1b[22m!");
 
-        let dim_style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
+        let dim_style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap(), &palette);
         assert!(dim_style.add_modifier.contains(Modifier::DIM));
 
-        let normal_style = cell_to_ratatui_style(parser.screen().cell(0, 5).unwrap());
+        let normal_style = cell_to_ratatui_style(parser.screen().cell(0, 5).unwrap(), &palette);
         assert!(!normal_style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
     fn cell_style_preserves_vt100_text_attributes() {
         let mut parser = vt100::Parser::new(1, 1, 0);
+        let palette = crate::terminal::TerminalPalette::default();
 
         parser.process(b"\x1b[1;3;4;7mx");
 
-        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
+        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap(), &palette);
         assert!(style.add_modifier.contains(Modifier::BOLD));
         assert!(style.add_modifier.contains(Modifier::ITALIC));
         assert!(style.add_modifier.contains(Modifier::UNDERLINED));
         assert!(style.add_modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn cell_style_uses_dynamic_default_foreground_color() {
+        let mut parser = vt100::Parser::new(1, 1, 0);
+        let mut palette = crate::terminal::TerminalPalette::default();
+        palette.default_fg = Some(vt100::Color::Rgb(0xc0, 0xca, 0xf5));
+
+        parser.process(b"x");
+
+        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap(), &palette);
+        assert_eq!(style.fg, Some(Color::Rgb(0xc0, 0xca, 0xf5)));
     }
 
     #[test]

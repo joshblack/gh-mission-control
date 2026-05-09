@@ -280,6 +280,7 @@ fn lock_parser(parser: &Mutex<TerminalParser>) -> MutexGuard<'_, TerminalParser>
 pub(crate) struct TerminalCallbacks {
     progress_event: Arc<Mutex<Option<Vec<u8>>>>,
     window_title: Option<String>,
+    palette: TerminalPalette,
 }
 
 impl TerminalCallbacks {
@@ -287,6 +288,37 @@ impl TerminalCallbacks {
         Self {
             progress_event,
             window_title: None,
+            palette: TerminalPalette::default(),
+        }
+    }
+
+    pub(crate) fn palette(&self) -> &TerminalPalette {
+        &self.palette
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TerminalPalette {
+    pub default_fg: Option<vt100::Color>,
+    pub default_bg: Option<vt100::Color>,
+    indexed: Vec<Option<vt100::Color>>,
+}
+
+impl TerminalPalette {
+    pub(crate) fn indexed_color(&self, index: u8) -> Option<vt100::Color> {
+        self.indexed.get(index as usize).copied().flatten()
+    }
+
+    fn set_indexed_color(&mut self, index: u8, color: vt100::Color) {
+        if self.indexed.len() <= index as usize {
+            self.indexed.resize(index as usize + 1, None);
+        }
+        self.indexed[index as usize] = Some(color);
+    }
+
+    fn reset_indexed_color(&mut self, index: u8) {
+        if let Some(color) = self.indexed.get_mut(index as usize) {
+            *color = None;
         }
     }
 }
@@ -301,6 +333,8 @@ impl vt100::Callbacks for TerminalCallbacks {
             if let Ok(mut progress_event) = self.progress_event.lock() {
                 *progress_event = Some(sequence);
             }
+        } else {
+            update_palette_from_osc(&mut self.palette, params);
         }
     }
 }
@@ -330,6 +364,79 @@ fn osc_progress_sequence(params: &[&[u8]]) -> Option<Vec<u8>> {
     sequence.push(b'\x07');
     Some(sequence)
 }
+
+fn update_palette_from_osc(palette: &mut TerminalPalette, params: &[&[u8]]) {
+    match params {
+        [b"10", color] => palette.default_fg = parse_osc_color(color),
+        [b"11", color] => palette.default_bg = parse_osc_color(color),
+        [b"110"] => palette.default_fg = None,
+        [b"111"] => palette.default_bg = None,
+        [b"4", colors @ ..] => {
+            for pair in colors.chunks_exact(2) {
+                let Ok(index) = std::str::from_utf8(pair[0])
+                    .unwrap_or_default()
+                    .parse::<u8>()
+                else {
+                    continue;
+                };
+                let Some(color) = parse_osc_color(pair[1]) else {
+                    continue;
+                };
+                palette.set_indexed_color(index, color);
+            }
+        }
+        [b"104"] => palette.indexed.clear(),
+        [b"104", indices @ ..] => {
+            for index in indices {
+                if let Ok(index) = std::str::from_utf8(index).unwrap_or_default().parse::<u8>() {
+                    palette.reset_indexed_color(index);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_osc_color(color: &[u8]) -> Option<vt100::Color> {
+    if let Some(hex) = color.strip_prefix(b"#") {
+        return parse_hex_color_components(hex);
+    }
+
+    let components = color.strip_prefix(b"rgb:")?;
+    let mut components = components.split(|b| *b == b'/');
+    let red = parse_hex_color_component(components.next()?)?;
+    let green = parse_hex_color_component(components.next()?)?;
+    let blue = parse_hex_color_component(components.next()?)?;
+    components
+        .next()
+        .is_none()
+        .then_some(vt100::Color::Rgb(red, green, blue))
+}
+
+fn parse_hex_color_components(hex: &[u8]) -> Option<vt100::Color> {
+    let component_len = match hex.len() {
+        3 | 6 | 9 | 12 => hex.len() / 3,
+        _ => return None,
+    };
+
+    let red = parse_hex_color_component(&hex[..component_len])?;
+    let green = parse_hex_color_component(&hex[component_len..component_len * 2])?;
+    let blue = parse_hex_color_component(&hex[component_len * 2..])?;
+    Some(vt100::Color::Rgb(red, green, blue))
+}
+
+fn parse_hex_color_component(hex: &[u8]) -> Option<u8> {
+    if hex.is_empty() || hex.len() > 4 {
+        return None;
+    }
+
+    let value = hex.iter().try_fold(0u32, |value, digit| {
+        Some((value << 4) | (*digit as char).to_digit(16)?)
+    })?;
+    let max = (1u32 << (hex.len() * 4)) - 1;
+    Some(((value * 255) / max) as u8)
+}
+
 fn tmux_has_session(tmux_session: &str) -> bool {
     Command::new("tmux")
         .arg("has-session")
@@ -503,6 +610,38 @@ mod tests {
     #[test]
     fn ignores_non_progress_osc_events() {
         assert_eq!(osc_progress_sequence(&[b"2", b"title"]), None);
+    }
+
+    #[test]
+    fn captures_dynamic_default_terminal_colors() {
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, test_terminal_callbacks());
+
+        parser.process(b"\x1b]10;#c0caf5\x07\x1b]11;rgb:1a/1b/26\x07");
+
+        assert_eq!(
+            parser.callbacks().palette().default_fg,
+            Some(vt100::Color::Rgb(0xc0, 0xca, 0xf5))
+        );
+        assert_eq!(
+            parser.callbacks().palette().default_bg,
+            Some(vt100::Color::Rgb(0x1a, 0x1b, 0x26))
+        );
+    }
+
+    #[test]
+    fn captures_dynamic_indexed_terminal_colors() {
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, test_terminal_callbacks());
+
+        parser.process(b"\x1b]4;7;#c0caf5;8;rgb:56/5f/89\x07");
+
+        assert_eq!(
+            parser.callbacks().palette().indexed_color(7),
+            Some(vt100::Color::Rgb(0xc0, 0xca, 0xf5))
+        );
+        assert_eq!(
+            parser.callbacks().palette().indexed_color(8),
+            Some(vt100::Color::Rgb(0x56, 0x5f, 0x89))
+        );
     }
 
     #[test]
