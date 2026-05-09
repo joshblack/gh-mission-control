@@ -247,16 +247,7 @@ fn relative_time(session: &CopilotSession, now: DateTime<Utc>) -> String {
     }
 
     let weeks = days / 7;
-    if weeks < 5 {
-        return format!("{weeks}w");
-    }
-
-    let months = days / 30;
-    if months < 12 {
-        return format!("{months}mo");
-    }
-
-    format!("{}y", days / 365)
+    format!("{weeks}w")
 }
 
 fn single_line(value: &str) -> String {
