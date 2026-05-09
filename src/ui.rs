@@ -23,7 +23,6 @@ const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = IDLE_COLOR;
 const SECTION_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
-const ITEM_TITLE_COLOR: Color = SECTION_COLOR;
 const MUTED_COLOR: Color = IDLE_COLOR;
 const USER_MSG_COLOR: Color = SECTION_COLOR;
 const AGENT_MSG_COLOR: Color = SECTION_COLOR;
@@ -178,10 +177,10 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
         let name_style = if (is_cursor && is_focused) || is_selected {
             Style::default()
-                .fg(ITEM_TITLE_COLOR)
+                .fg(SECTION_COLOR)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(ITEM_TITLE_COLOR)
+            Style::default().fg(SECTION_COLOR)
         };
 
         let prefix = if is_cursor && is_focused {
