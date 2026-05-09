@@ -309,7 +309,7 @@ fn resize_embedded_terminal(app: &mut App, term_size: ratatui::layout::Size) {
 fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match app.mode {
         Mode::Normal => handle_normal(app, key, modifiers),
-        Mode::NewSessionDir => handle_input(app, key),
+        Mode::NewSessionDir => handle_input(app, key, modifiers),
         Mode::DirectoryFilter => handle_directory_filter_input(app, key, modifiers),
         Mode::Terminal => handle_terminal(app, key, modifiers),
         Mode::Help => handle_help(app, key),
@@ -407,15 +407,23 @@ fn handle_help(app: &mut App, key: KeyCode) {
     }
 }
 
-fn handle_input(app: &mut App, key: KeyCode) {
+fn handle_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match key {
         KeyCode::Enter => app.confirm_new_session(),
         KeyCode::Esc => app.cancel_input(),
+        KeyCode::Down => app.select_next_directory_suggestion(),
+        KeyCode::Up => app.select_previous_directory_suggestion(),
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            app.sync_directory_suggestion_cursor();
+        }
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.input_buffer.clear();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            app.sync_directory_suggestion_cursor();
         }
         _ => {}
     }
@@ -425,14 +433,19 @@ fn handle_directory_filter_input(app: &mut App, key: KeyCode, modifiers: KeyModi
     match key {
         KeyCode::Enter => app.confirm_directory_filter(),
         KeyCode::Esc => app.cancel_input(),
+        KeyCode::Down => app.select_next_directory_suggestion(),
+        KeyCode::Up => app.select_previous_directory_suggestion(),
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
             app.input_buffer.clear();
+            app.sync_directory_suggestion_cursor();
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            app.sync_directory_suggestion_cursor();
         }
         _ => {}
     }
