@@ -1,7 +1,11 @@
-use crate::session::{load_sessions, refresh_session_statuses, CopilotSession, SessionStatus};
+use crate::session::{
+    load_remote_task_log, load_sessions, refresh_session_statuses, CopilotSession, SessionSource,
+    SessionStatus,
+};
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 const DETAIL_PAGE_SCROLL_AMOUNT: usize = 5;
 
@@ -38,6 +42,10 @@ pub enum PendingAction {
     LaunchNew {
         dir: PathBuf,
     },
+    /// Open a remote agent task in the browser.
+    OpenRemoteTask {
+        url: String,
+    },
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -69,6 +77,12 @@ pub struct App {
     pub embedded_terminal: Option<EmbeddedTerminal>,
     /// Whether the embedded terminal is taking the full TUI area.
     pub terminal_fullscreen: bool,
+    /// Sends completed remote log loads from background workers to the main loop.
+    remote_log_sender: Sender<(String, String)>,
+    /// Receives completed remote log loads without blocking the UI.
+    remote_log_receiver: Receiver<(String, String)>,
+    /// Remote session IDs whose logs are currently loading in the background.
+    remote_logs_loading: HashSet<String>,
 }
 
 impl App {
@@ -78,6 +92,7 @@ impl App {
 
         let selected_session = flat_list.first().copied();
         let cursor = 0;
+        let (remote_log_sender, remote_log_receiver) = mpsc::channel();
 
         App {
             sessions,
@@ -98,6 +113,9 @@ impl App {
             notified_waiting_sessions: HashSet::new(),
             embedded_terminal: None,
             terminal_fullscreen: false,
+            remote_log_sender,
+            remote_log_receiver,
+            remote_logs_loading: HashSet::new(),
         }
     }
 
@@ -122,11 +140,20 @@ impl App {
         }
     }
 
-    fn replace_sessions(&mut self, sessions: Vec<CopilotSession>) {
+    fn replace_sessions(&mut self, mut sessions: Vec<CopilotSession>) {
         let cursor_id = self
             .session_at_cursor()
             .map(|i| self.sessions[i].id.clone())
             .or_else(|| self.selected_session.map(|i| self.sessions[i].id.clone()));
+        for session in &mut sessions {
+            if session.source == SessionSource::Remote {
+                session.remote_log = self
+                    .sessions
+                    .iter()
+                    .find(|existing| existing.id == session.id)
+                    .and_then(|existing| existing.remote_log.clone());
+            }
+        }
         self.sessions = sessions;
         let session_ids: HashSet<&str> = self
             .sessions
@@ -151,6 +178,9 @@ impl App {
         }
         self.update_selected_from_cursor();
         self.detail_scroll = 0;
+        if self.active_panel == Panel::Detail {
+            self.load_selected_remote_preview();
+        }
     }
 
     pub fn capture_new_session_reload_baseline(&mut self) {
@@ -208,6 +238,7 @@ impl App {
             self.selected_session = Some(idx);
             self.active_panel = Panel::Detail;
             self.detail_scroll = 0;
+            self.load_selected_remote_preview();
         }
     }
 
@@ -292,12 +323,56 @@ impl App {
     /// Queue opening an embedded terminal for the session under the cursor.
     pub fn open_session_embedded(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
+            if self.sessions[idx].source == SessionSource::Remote {
+                self.selected_session = Some(idx);
+                self.active_panel = Panel::Detail;
+                self.load_selected_remote_preview();
+                match self.sessions[idx].remote_url.clone() {
+                    Some(url) => self.pending_action = PendingAction::OpenRemoteTask { url },
+                    None => self.status_message = Some("Remote task URL not available".into()),
+                }
+                return;
+            }
             let id = self.sessions[idx].id.clone();
             let cwd = self.sessions[idx].cwd.clone();
             self.selected_session = Some(idx);
             self.active_panel = Panel::Detail;
             self.pending_action = PendingAction::OpenEmbedded { id, cwd };
         }
+    }
+
+    /// Starts loading the selected remote task log in the background if needed.
+    fn load_selected_remote_preview(&mut self) {
+        let Some(idx) = self.selected_session else {
+            return;
+        };
+        if self.sessions[idx].source != SessionSource::Remote
+            || self.sessions[idx].remote_log.is_some()
+            || self.remote_logs_loading.contains(&self.sessions[idx].id)
+        {
+            return;
+        }
+
+        let id = self.sessions[idx].id.clone();
+        self.remote_logs_loading.insert(id.clone());
+        let sender = self.remote_log_sender.clone();
+        std::thread::spawn(move || {
+            let log = load_remote_task_log(&id);
+            drop(sender.send((id, log)));
+        });
+    }
+
+    pub fn poll_remote_log_loads(&mut self) {
+        while let Ok((id, log)) = self.remote_log_receiver.try_recv() {
+            self.remote_logs_loading.remove(&id);
+            if let Some(session) = self.sessions.iter_mut().find(|session| session.id == id) {
+                session.remote_log = Some(log);
+            }
+        }
+    }
+
+    pub fn is_remote_log_loading(&self, id: &str) -> bool {
+        self.remote_logs_loading.contains(id)
     }
 
     /// Detach from the embedded terminal and return to normal mode.
@@ -357,4 +432,108 @@ fn build_flat_list(sessions: &[CopilotSession]) -> Vec<usize> {
     }
 
     flat
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::SessionStatus;
+    use chrono::Utc;
+
+    fn app_with_sessions(sessions: Vec<CopilotSession>) -> App {
+        let (remote_log_sender, remote_log_receiver) = mpsc::channel();
+        App {
+            flat_list: build_flat_list(&sessions),
+            cursor: 0,
+            selected_session: Some(0),
+            sessions,
+            active_panel: Panel::Sessions,
+            copilot_dir: PathBuf::from("/tmp/copilot"),
+            launch_dir: PathBuf::from("/tmp"),
+            mode: Mode::Normal,
+            input_buffer: String::new(),
+            detail_scroll: 0,
+            help_scroll: 0,
+            should_quit: false,
+            status_message: None,
+            pending_action: PendingAction::None,
+            new_session_reload_baseline: None,
+            notified_waiting_sessions: HashSet::new(),
+            embedded_terminal: None,
+            terminal_fullscreen: false,
+            remote_log_sender,
+            remote_log_receiver,
+            remote_logs_loading: HashSet::new(),
+        }
+    }
+
+    fn session(id: &str, source: SessionSource) -> CopilotSession {
+        CopilotSession {
+            id: id.to_string(),
+            source,
+            cwd: PathBuf::from("/tmp"),
+            git_root: None,
+            repository: None,
+            branch: None,
+            summary: None,
+            last_agent_message: None,
+            user_named: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status: SessionStatus::Idle,
+            remote_state: None,
+            remote_url: None,
+            remote_user: None,
+            pull_request: None,
+            remote_log: None,
+        }
+    }
+
+    #[test]
+    fn moving_cursor_to_remote_task_does_not_load_log() {
+        let mut app = app_with_sessions(vec![
+            session("local", SessionSource::Local),
+            session("remote", SessionSource::Remote),
+        ]);
+
+        app.move_down();
+
+        assert_eq!(app.selected_session, Some(1));
+        assert!(!app.is_remote_log_loading("remote"));
+        assert!(app.sessions[1].remote_log.is_none());
+    }
+
+    #[test]
+    fn poll_remote_log_loads_updates_matching_session() {
+        let mut app = app_with_sessions(vec![session("remote", SessionSource::Remote)]);
+        app.remote_logs_loading.insert("remote".to_string());
+
+        app.remote_log_sender
+            .send(("remote".to_string(), "log output".to_string()))
+            .unwrap();
+        app.poll_remote_log_loads();
+
+        assert!(!app.is_remote_log_loading("remote"));
+        assert_eq!(app.sessions[0].remote_log.as_deref(), Some("log output"));
+    }
+
+    #[test]
+    fn opening_remote_task_uses_task_url() {
+        let mut remote = session("remote", SessionSource::Remote);
+        remote.remote_url =
+            Some("https://github.com/owner/repo/pull/42/agent-sessions/remote".to_string());
+        let mut app = app_with_sessions(vec![remote]);
+
+        app.open_session_embedded();
+
+        match app.pending_action {
+            PendingAction::OpenRemoteTask { ref url } => {
+                assert_eq!(
+                    url,
+                    "https://github.com/owner/repo/pull/42/agent-sessions/remote"
+                );
+            }
+            _ => panic!("expected remote task to open in browser"),
+        }
+    }
 }
