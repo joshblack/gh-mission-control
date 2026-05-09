@@ -890,12 +890,18 @@ fn response_indicates_error(response: &str) -> bool {
 }
 
 fn active_tmux_session_names() -> HashSet<String> {
-    let output = Command::new("tmux")
-        .arg("list-sessions")
-        .arg("-F")
-        .arg("#{session_name}")
-        .stderr(Stdio::null())
-        .output();
+    let mut names = active_tmux_names("list-sessions", "#{session_name}");
+    names.extend(active_tmux_names("list-panes", "#{pane_title}"));
+    names
+}
+
+fn active_tmux_names(command: &str, format: &str) -> HashSet<String> {
+    let mut tmux = Command::new("tmux");
+    tmux.arg(command);
+    if command == "list-panes" {
+        tmux.arg("-a");
+    }
+    let output = tmux.arg("-F").arg(format).stderr(Stdio::null()).output();
 
     let Ok(output) = output else {
         return HashSet::new();
@@ -904,7 +910,11 @@ fn active_tmux_session_names() -> HashSet<String> {
         return HashSet::new();
     }
 
-    String::from_utf8_lossy(&output.stdout)
+    tmux_prefixed_names(&output.stdout)
+}
+
+fn tmux_prefixed_names(output: &[u8]) -> HashSet<String> {
+    String::from_utf8_lossy(output)
         .lines()
         .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
         .map(ToString::to_string)
@@ -1047,6 +1057,15 @@ mod tests {
 
         assert_eq!(sanitized, "start[31m red text\nnext\tline");
         assert!(!sanitized.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn tmux_prefixed_names_ignores_unmanaged_sessions() {
+        let names = tmux_prefixed_names(b"ghpilot_one\nshell\nghpilot_two\n");
+
+        assert!(names.contains("ghpilot_one"));
+        assert!(names.contains("ghpilot_two"));
+        assert!(!names.contains("shell"));
     }
 
     #[test]

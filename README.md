@@ -24,7 +24,7 @@ gh pilot
 
 Interact with sessions using arrow keys or j/k momvement. You can also view all keybindings with <kbd>?</kbd>.
 
-When launching a copilot session, it will open the CLI in a new tmux session. To leave the session, use <kbd>Ctrl+b</kbd> (your tmux leader key) and then <kbd>d</kbd> to detach. You can also `/quit` and it will return you to the main session list.
+When launching `gh pilot`, the TUI starts inside a `ghpilot` tmux session when possible. Opening or launching a Copilot session focuses a tmux split next to the TUI. To return to the TUI, use your tmux pane navigation shortcuts. You can also `/quit` in Copilot to close the split.
 
 ## Requirements
 

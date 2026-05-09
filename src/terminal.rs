@@ -16,6 +16,8 @@ const TMUX_TITLE_CACHE_DURATION: Duration = Duration::from_millis(250);
 const TMUX_CLIENT_FEATURES: &str = "RGB";
 const COPILOT_TERM: &str = "xterm-256color";
 const COPILOT_COLORTERM: &str = "truecolor";
+const TUI_TMUX_SESSION: &str = "ghpilot";
+const DISABLE_TMUX_BOOTSTRAP_ENV: &str = "GH_PILOT_NO_TMUX_BOOTSTRAP";
 pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
 pub(crate) type TerminalParser = vt100::Parser<TerminalCallbacks>;
 
@@ -340,6 +342,61 @@ pub fn ensure_tmux_session(
     Ok(tmux_session)
 }
 
+pub fn is_inside_tmux() -> bool {
+    std::env::var_os("TMUX").is_some()
+}
+
+pub fn bootstrap_tui_tmux_session() -> anyhow::Result<bool> {
+    if is_inside_tmux()
+        || std::env::var_os(DISABLE_TMUX_BOOTSTRAP_ENV)
+            .map(|value| value != "0")
+            .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+
+    let command = current_exe_shell_command()?;
+    let status = Command::new("tmux")
+        .arg("new-session")
+        .arg("-A")
+        .arg("-s")
+        .arg(TUI_TMUX_SESSION)
+        .arg(command)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("tmux new-session exited with {status}");
+    }
+    Ok(true)
+}
+
+pub fn open_copilot_split(
+    session_id: &str,
+    copilot_bin: &Path,
+    args: &[impl AsRef<OsStr>],
+    cwd: Option<&Path>,
+) -> anyhow::Result<()> {
+    if !is_inside_tmux() {
+        anyhow::bail!("not running inside tmux");
+    }
+
+    let mut command = Command::new("tmux");
+    command.arg("split-window").arg("-h");
+    if let Some(dir) = cwd {
+        command.arg("-c").arg(dir);
+    }
+    command
+        .arg(copilot_shell_command(copilot_bin, args))
+        .arg(";")
+        .arg("select-pane")
+        .arg("-T")
+        .arg(tmux_session_name(session_id));
+    let status = command.status()?;
+    if !status.success() {
+        anyhow::bail!("tmux split-window exited with {status}");
+    }
+    Ok(())
+}
+
 pub fn attach_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
     let status = Command::new("tmux")
         .arg("-2")
@@ -378,6 +435,16 @@ pub fn reuse_tmux_session(tmux_session: &str, session_id: &str) -> anyhow::Resul
     } else {
         tmux_session.to_string()
     })
+}
+
+fn current_exe_shell_command() -> anyhow::Result<String> {
+    let exe = std::env::current_exe()?;
+    let words = std::iter::once(exe.as_os_str().to_string_lossy().to_string()).chain(
+        std::env::args_os()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().to_string()),
+    );
+    Ok(shell_words::join(words))
 }
 
 fn configure_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
@@ -634,6 +701,14 @@ mod tests {
         assert_eq!(
             command,
             "env 'TERM=xterm-256color' 'COLORTERM=truecolor' /usr/local/bin/copilot -C /tmp"
+        );
+    }
+
+    #[test]
+    fn tmux_session_name_sanitizes_split_pane_titles() {
+        assert_eq!(
+            tmux_session_name("session:with spaces"),
+            "ghpilot_session_with_spaces"
         );
     }
 }

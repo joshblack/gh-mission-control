@@ -441,7 +441,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             (
                 "Select a session with j/k + Enter",
-                "Press [o] for native terminal or [e] for embedded preview",
+                "Press [o] for tmux split or [e] for embedded preview",
             )
         };
         let msg = Paragraph::new(Text::from(vec![
@@ -624,7 +624,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         )));
         turn_lines.push(Line::from(Span::raw("")));
         turn_lines.push(Line::from(Span::styled(
-            "  Press [o] for native terminal or [e] for embedded preview.",
+            "  Press [o] for tmux split or [e] for embedded preview.",
             Style::default().fg(MUTED_COLOR),
         )));
     } else {
@@ -949,7 +949,7 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 if app.sessions[idx].source == SessionSource::Remote {
                     shortcuts.push(("Open browser", "o"));
                 } else {
-                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Split", "o"));
                     shortcuts.push(("Preview", "e"));
                 }
             }
@@ -963,7 +963,7 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 if app.sessions[idx].source == SessionSource::Remote {
                     shortcuts.push(("Open browser", "o"));
                 } else {
-                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Split", "o"));
                     shortcuts.push(("Preview", "e"));
                 }
             }
@@ -1104,9 +1104,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("j / ↓", "Move selection down"),
         help_shortcut("k / ↑", "Move selection up"),
         help_shortcut("Enter / Space", "View the selected session"),
-        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("o", "Focus the session in a tmux split"),
         help_shortcut("e", "Open the selected session in the embedded preview"),
-        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
+        help_shortcut("n", "Launch a new Copilot session in a tmux split"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Detail panel"),
@@ -1114,9 +1114,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("k / ↑", "Scroll conversation up"),
         help_shortcut("PageDown / PageUp", "Scroll conversation by page"),
         help_shortcut("h / ← / Esc", "Return to the sessions panel"),
-        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("o", "Focus the session in a tmux split"),
         help_shortcut("e", "Open the selected session in the embedded preview"),
-        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
+        help_shortcut("n", "Launch a new Copilot session in a tmux split"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Embedded terminal"),

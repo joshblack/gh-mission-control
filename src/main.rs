@@ -24,11 +24,17 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal::{
-    attach_tmux_session, ensure_tmux_session, key_to_bytes, mouse_to_bytes, reuse_tmux_session,
-    EmbeddedTerminal,
+    attach_tmux_session, bootstrap_tui_tmux_session, ensure_tmux_session, is_inside_tmux,
+    key_to_bytes, mouse_to_bytes, open_copilot_split, reuse_tmux_session, EmbeddedTerminal,
 };
 
 fn main() -> Result<()> {
+    match bootstrap_tui_tmux_session() {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => eprintln!("Warning: failed to start tmux-hosted TUI: {e}"),
+    }
+
     let copilot_dir = session::copilot_dir();
     let launch_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut app = App::new(copilot_dir, launch_dir);
@@ -91,21 +97,25 @@ where
                 Some(bin) => {
                     let cwd_arg = cwd.to_string_lossy();
                     let resume_arg = format!("--resume={id}");
-                    match ensure_tmux_session(
-                        &id,
-                        &bin,
-                        &["-C", cwd_arg.as_ref(), resume_arg.as_str()],
-                        Some(&cwd),
-                    )
-                    .and_then(|tmux_session| {
-                        run_native_tmux_session(terminal, &tmux_session)?;
-                        Ok(())
-                    }) {
+                    let args = ["-C", cwd_arg.as_ref(), resume_arg.as_str()];
+                    let opened_split = is_inside_tmux();
+                    let open_result = if opened_split {
+                        open_copilot_split(&id, &bin, &args, Some(&cwd))
+                    } else {
+                        ensure_tmux_session(&id, &bin, &args, Some(&cwd)).and_then(|tmux_session| {
+                            run_native_tmux_session(terminal, &tmux_session)
+                        })
+                    };
+                    match open_result {
                         Ok(()) => {
                             app.mode = Mode::Normal;
                             app.terminal_fullscreen = false;
                             app.reload();
-                            app.status_message = Some("Returned from native terminal".into());
+                            app.status_message = Some(if opened_split {
+                                "Focused Copilot split".into()
+                            } else {
+                                "Returned from native terminal".into()
+                            });
                         }
                         Err(e) => {
                             app.status_message =
@@ -156,28 +166,45 @@ where
                 Some(bin) => {
                     let dir_str = dir.to_string_lossy().to_string();
                     app.capture_new_session_reload_baseline();
-                    match ensure_tmux_session("new", &bin, &["-C", dir_str.as_str()], Some(&dir))
-                        .and_then(|tmux_session| {
-                            run_native_tmux_session(terminal, &tmux_session)?;
-                            Ok(tmux_session)
-                        }) {
+                    let args = ["-C", dir_str.as_str()];
+                    let opened_split = is_inside_tmux();
+                    let launch_result = if opened_split {
+                        open_copilot_split("new", &bin, &args, Some(&dir)).map(|()| None)
+                    } else {
+                        ensure_tmux_session("new", &bin, &args, Some(&dir)).and_then(
+                            |tmux_session| {
+                                run_native_tmux_session(terminal, &tmux_session)?;
+                                Ok(Some(tmux_session))
+                            },
+                        )
+                    };
+                    match launch_result {
                         Ok(tmux_session) => {
                             let new_session_id = app.reload_if_new_session_created();
-                            let tmux_rename_error = new_session_id
-                                .as_deref()
-                                .and_then(|id| reuse_tmux_session(&tmux_session, id).err());
-                            app.clear_new_session_reload_watch();
-                            last_new_session_reload_check = None;
+                            let tmux_rename_error = new_session_id.as_deref().and_then(|id| {
+                                tmux_session.as_deref().and_then(|tmux_session| {
+                                    reuse_tmux_session(tmux_session, id).err()
+                                })
+                            });
+                            if !opened_split || new_session_id.is_some() {
+                                app.clear_new_session_reload_watch();
+                                last_new_session_reload_check = None;
+                            }
                             app.mode = Mode::Normal;
                             app.terminal_fullscreen = false;
                             app.reload();
-                            app.status_message = Some(match (new_session_id, tmux_rename_error) {
-                                (Some(_), Some(e)) => {
-                                    format!("New session loaded; tmux reuse failed: {e}")
-                                }
-                                (Some(_), None) => "New session loaded".into(),
-                                (None, _) => "Returned from native terminal".into(),
-                            });
+                            app.status_message =
+                                Some(if opened_split && new_session_id.is_none() {
+                                    "Focused new Copilot split".into()
+                                } else {
+                                    match (new_session_id, tmux_rename_error) {
+                                        (Some(_), Some(e)) => {
+                                            format!("New session loaded; tmux reuse failed: {e}")
+                                        }
+                                        (Some(_), None) => "New session loaded".into(),
+                                        (None, _) => "Returned from native terminal".into(),
+                                    }
+                                });
                         }
                         Err(e) => {
                             app.mode = Mode::Normal;
