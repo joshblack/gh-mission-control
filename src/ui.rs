@@ -902,10 +902,12 @@ fn dim_vt100_color(color: vt100::Color) -> Color {
 }
 
 fn dim_rgb(r: u8, g: u8, b: u8) -> Color {
-    Color::Rgb(r / 2, g / 2, b / 2)
+    Color::Rgb(r >> 1, g >> 1, b >> 1)
 }
 
 fn xterm_indexed_color(index: u8) -> (u8, u8, u8) {
+    const ANSI_COLOR_COUNT: u8 = 16;
+    const XTERM_COLOR_CUBE_SIZE: u8 = 6;
     const ANSI_COLORS: [(u8, u8, u8); 16] = [
         (0x00, 0x00, 0x00),
         (0x80, 0x00, 0x00),
@@ -934,10 +936,10 @@ fn xterm_indexed_color(index: u8) -> (u8, u8, u8) {
         return (level, level, level);
     }
 
-    let index = index - 16;
-    let r = xterm_color_cube_level(index / 36);
-    let g = xterm_color_cube_level((index / 6) % 6);
-    let b = xterm_color_cube_level(index % 6);
+    let index = index - ANSI_COLOR_COUNT;
+    let r = xterm_color_cube_level(index / XTERM_COLOR_CUBE_SIZE.pow(2));
+    let g = xterm_color_cube_level((index / XTERM_COLOR_CUBE_SIZE) % XTERM_COLOR_CUBE_SIZE);
+    let b = xterm_color_cube_level(index % XTERM_COLOR_CUBE_SIZE);
     (r, g, b)
 }
 
