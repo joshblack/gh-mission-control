@@ -45,7 +45,8 @@ impl SessionStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT name, display_name, project_dir, status, last_activity, has_bell, pane_dead
+                "SELECT name, display_name, project_dir, status, last_activity, has_bell,
+                        pane_dead, is_remote
                  FROM local_sessions
                  ORDER BY status_rank, last_activity DESC, display_name ASC",
             )
@@ -65,6 +66,7 @@ impl SessionStore {
                         .and_then(system_time_from_unix),
                     has_bell: row.get::<_, i64>(5)? != 0,
                     pane_dead: row.get::<_, i64>(6)? != 0,
+                    is_remote: row.get::<_, i64>(7)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()
@@ -83,8 +85,8 @@ impl SessionStore {
             let mut insert = transaction.prepare(
                 "INSERT INTO local_sessions (
                     name, display_name, project_dir, status, status_rank, last_activity,
-                    has_bell, pane_dead, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    has_bell, pane_dead, updated_at, is_remote
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
 
             let updated_at = unix_now();
@@ -99,6 +101,7 @@ impl SessionStore {
                     bool_to_i64(session.has_bell),
                     bool_to_i64(session.pane_dead),
                     updated_at,
+                    bool_to_i64(session.is_remote),
                 ])?;
             }
         }
@@ -291,6 +294,7 @@ impl SessionStore {
                     last_activity INTEGER,
                     has_bell INTEGER NOT NULL,
                     pane_dead INTEGER NOT NULL,
+                    is_remote INTEGER NOT NULL DEFAULT 0,
                     updated_at INTEGER NOT NULL
                 );
 
@@ -324,6 +328,7 @@ impl SessionStore {
         self.ensure_column("remote_sessions", "url", "TEXT")?;
         self.ensure_column("remote_sessions", "pr_url", "TEXT")?;
         self.ensure_column("remote_sessions", "repository", "TEXT")?;
+        self.ensure_column("local_sessions", "is_remote", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
     }
 

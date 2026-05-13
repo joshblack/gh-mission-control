@@ -68,7 +68,7 @@ pub fn detect_status(
         };
     }
 
-    if content_changed && activity_recent {
+    if content_changed || activity_recent {
         return SessionStatus::Busy;
     }
 
@@ -303,14 +303,18 @@ mod tests {
     }
 
     #[test]
-    fn detects_recent_activity_as_busy() {
+    fn detects_activity_as_busy() {
         assert_eq!(
             detect_status("summary output", true, true, false),
             SessionStatus::Busy
         );
         assert_eq!(
             detect_status("summary output", true, false, false),
-            SessionStatus::Idle
+            SessionStatus::Busy
+        );
+        assert_eq!(
+            detect_status("summary output", false, true, false),
+            SessionStatus::Busy
         );
     }
 

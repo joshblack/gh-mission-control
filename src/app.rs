@@ -6,13 +6,15 @@ use std::process::Command as StdCommand;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
     MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
+    Clear as TerminalClear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -359,7 +361,10 @@ impl App {
         };
 
         match row {
-            TreeRow::LocalSession { .. }
+            TreeRow::LocalSession {
+                under_remote: false,
+                ..
+            }
             | TreeRow::RemoteSession {
                 under_remote: false,
                 ..
@@ -370,7 +375,10 @@ impl App {
             } => {
                 self.select_group_row(group_index);
             }
-            TreeRow::RemoteSession {
+            TreeRow::LocalSession {
+                under_remote: true, ..
+            }
+            | TreeRow::RemoteSession {
                 under_remote: true, ..
             }
             | TreeRow::Placeholder {
@@ -405,6 +413,9 @@ impl App {
 
         match row {
             TreeRow::RemoteGroup { .. }
+            | TreeRow::LocalSession {
+                under_remote: true, ..
+            }
             | TreeRow::RemoteSession {
                 under_remote: true, ..
             } => {
@@ -504,7 +515,7 @@ impl App {
             .selected_group()
             .map(|group| group.path)
             .unwrap_or_else(|| self.current_dir.clone());
-        self.new_session_in_dir(project_dir, false)
+        self.new_session_in_dir(project_dir, self.new_session_remote_enabled())
     }
 
     fn new_session_in_dir(&mut self, project_dir: PathBuf, remote_enabled: bool) -> Result<()> {
@@ -604,14 +615,9 @@ impl App {
 
     fn new_session_remote_enabled(&self) -> bool {
         self.remote_enabled
-            || matches!(
-                self.selected_tree_row(),
-                Some(TreeRow::RemoteGroup { .. } | TreeRow::RemoteSession { .. })
-                    | Some(TreeRow::Placeholder {
-                        under_remote: true,
-                        ..
-                    })
-            )
+            || self
+                .selected_tree_row()
+                .is_some_and(|row| row.is_remote_context())
     }
 
     fn close_selected(&mut self) -> Result<()> {
@@ -1234,13 +1240,8 @@ fn render_sessions(
 
     let list = List::new(items)
         .block(block)
-        .highlight_symbol("")
-        .highlight_style(
-            Style::default()
-                .fg(TOKYO_BG)
-                .bg(TOKYO_BLUE)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_symbol(Span::styled("▌ ", Style::default().fg(TOKYO_BLUE)))
+        .highlight_style(Style::default());
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -1306,6 +1307,11 @@ fn resume_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<
     enable_raw_mode().context("failed to enable raw mode")?;
     execute!(
         terminal.backend_mut(),
+        MoveToColumn(0),
+        TerminalClear(ClearType::CurrentLine),
+        MoveUp(1),
+        MoveToColumn(0),
+        TerminalClear(ClearType::CurrentLine),
         SetTitle("gh pilot"),
         EnterAlternateScreen,
         EnableMouseCapture
@@ -1352,6 +1358,7 @@ impl ProjectGroup {
                 matches!(
                     entry,
                     GroupEntry::Remote(_)
+                        | GroupEntry::RemoteLocal(_)
                         | GroupEntry::Placeholder(PlaceholderKind::RemoteLoading)
                         | GroupEntry::Placeholder(PlaceholderKind::RemoteEmpty)
                         | GroupEntry::Placeholder(PlaceholderKind::RemoteError(_))
@@ -1375,6 +1382,8 @@ enum TreeRow {
         group_index: usize,
         session_index: usize,
         is_last: bool,
+        is_remote: bool,
+        under_remote: bool,
     },
     RemoteSession {
         group_index: usize,
@@ -1400,11 +1409,35 @@ impl TreeRow {
             | Self::Placeholder { group_index, .. } => *group_index,
         }
     }
+
+    fn is_remote_context(&self) -> bool {
+        match self {
+            Self::RemoteGroup { .. } | Self::RemoteSession { .. } => true,
+            Self::LocalSession {
+                is_remote,
+                under_remote,
+                ..
+            } => *is_remote || *under_remote,
+            Self::Placeholder {
+                kind, under_remote, ..
+            } => {
+                *under_remote
+                    || matches!(
+                        kind,
+                        PlaceholderKind::RemoteLoading
+                            | PlaceholderKind::RemoteEmpty
+                            | PlaceholderKind::RemoteError(_)
+                    )
+            }
+            Self::Group { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 enum GroupEntry {
     Local(usize),
+    RemoteLocal(usize),
     Remote(usize),
     Placeholder(PlaceholderKind),
 }
@@ -1563,7 +1596,11 @@ impl StatusCounts {
         let mut counts = Self::default();
         for session in sessions {
             counts.add(session.status);
-            counts.local += 1;
+            if session.is_remote {
+                counts.remote += 1;
+            } else {
+                counts.local += 1;
+            }
         }
         for session in remote_sessions {
             counts.add(session.status);
@@ -1614,7 +1651,11 @@ fn project_groups(
     }
 
     for (index, session) in sessions.iter().enumerate() {
-        if !filter.matches_local(session.status) {
+        if session.is_remote {
+            if !filter.matches_remote(session.status) {
+                continue;
+            }
+        } else if !filter.matches_local(session.status) {
             continue;
         }
 
@@ -1637,12 +1678,21 @@ fn project_groups(
         entry.is_current |= session.is_current_project;
         entry.has_bell |= session.has_bell;
         entry.counts.add(session.status);
+        if session.is_remote {
+            entry.counts.remote += 1;
+        } else {
+            entry.counts.local += 1;
+        }
         entry.record_activity(
             session
                 .last_activity
                 .and_then(activity_key_from_system_time),
         );
-        entry.entries.push(GroupEntry::Local(index));
+        if session.is_remote {
+            entry.entries.push(GroupEntry::RemoteLocal(index));
+        } else {
+            entry.entries.push(GroupEntry::Local(index));
+        }
     }
 
     for (index, session) in remote_sessions.iter().enumerate() {
@@ -1667,6 +1717,7 @@ fn project_groups(
         });
 
         entry.counts.add(session.status);
+        entry.counts.remote += 1;
         entry.record_activity(remote_activity_key(session));
         entry.entries.push(GroupEntry::Remote(index));
     }
@@ -1756,6 +1807,8 @@ fn tree_rows(
                     group_index,
                     session_index,
                     is_last,
+                    is_remote: false,
+                    under_remote: false,
                 }),
                 GroupEntry::Placeholder(kind) => rows.push(TreeRow::Placeholder {
                     group_index,
@@ -1763,7 +1816,7 @@ fn tree_rows(
                     is_last,
                     under_remote: false,
                 }),
-                GroupEntry::Remote(_) => {}
+                GroupEntry::Remote(_) | GroupEntry::RemoteLocal(_) => {}
             }
         }
 
@@ -1780,6 +1833,13 @@ fn tree_rows(
         for (position, entry) in remote_entries.iter().cloned().enumerate() {
             let is_last = position + 1 == remote_entries.len();
             match entry {
+                GroupEntry::RemoteLocal(session_index) => rows.push(TreeRow::LocalSession {
+                    group_index,
+                    session_index,
+                    is_last,
+                    is_remote: true,
+                    under_remote: has_remote_subtree,
+                }),
                 GroupEntry::Remote(remote_index) => rows.push(TreeRow::RemoteSession {
                     group_index,
                     remote_index,
@@ -1871,10 +1931,16 @@ fn tree_item(
         TreeRow::LocalSession {
             session_index,
             is_last,
+            under_remote,
             ..
         } => {
             let session = &sessions[session_index];
-            let branch = if is_last { "  └─ " } else { "  ├─ " };
+            let branch = match (under_remote, is_last) {
+                (true, true) => "    └─ ",
+                (true, false) => "    ├─ ",
+                (false, true) => "  └─ ",
+                (false, false) => "  ├─ ",
+            };
             let bell = if session.has_bell { " 🔔" } else { "" };
             let exited = if session.pane_dead { " exited" } else { "" };
             let suffix = " copilot";
@@ -2072,7 +2138,7 @@ fn group_preview(
 
     for entry in &group.entries {
         match entry {
-            GroupEntry::Local(index) => {
+            GroupEntry::Local(index) | GroupEntry::RemoteLocal(index) => {
                 let session = &sessions[*index];
                 lines.push(Line::from(vec![
                     Span::styled("  ", Style::default()),
@@ -2945,5 +3011,51 @@ mod app_tests {
         );
         assert!(matching_task_repository(&other_repo_task, Some("joshblack/gh-pilot")).is_none());
         assert!(matching_task_repository(&repo_task, None).is_none());
+    }
+
+    #[test]
+    fn remote_managed_sessions_are_grouped_under_remote_subtree() {
+        let project_dir = PathBuf::from("/tmp/current-project");
+        let sessions = vec![ManagedSession {
+            name: "gh-pilot__current-project__1__1".to_owned(),
+            display_name: "current project".to_owned(),
+            project_dir: project_dir.clone(),
+            is_current_project: true,
+            is_remote: true,
+            status: SessionStatus::Busy,
+            last_activity: None,
+            has_bell: false,
+            pane_dead: false,
+        }];
+        let groups = project_groups(
+            &sessions,
+            &[],
+            std::slice::from_ref(&project_dir),
+            &BTreeMap::new(),
+            SessionFilter::All,
+            &RemoteLoadState::Loaded,
+            &project_dir,
+        );
+        let rows = tree_rows(&groups, &BTreeSet::new(), SessionFilter::All);
+
+        assert!(matches!(
+            rows.get(1),
+            Some(TreeRow::Placeholder {
+                kind: PlaceholderKind::LocalEmpty,
+                ..
+            })
+        ));
+        assert!(matches!(rows.get(2), Some(TreeRow::RemoteGroup { .. })));
+        assert!(matches!(
+            rows.get(3),
+            Some(TreeRow::LocalSession {
+                session_index: 0,
+                is_remote: true,
+                under_remote: true,
+                ..
+            })
+        ));
+        assert_eq!(groups[0].counts.local, 0);
+        assert_eq!(groups[0].counts.remote, 1);
     }
 }
