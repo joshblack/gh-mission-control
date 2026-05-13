@@ -20,6 +20,7 @@ pub struct ManagedSession {
     pub display_name: String,
     pub project_dir: PathBuf,
     pub is_current_project: bool,
+    pub is_remote: bool,
     pub status: SessionStatus,
     pub last_activity: Option<SystemTime>,
     pub has_bell: bool,
@@ -140,6 +141,7 @@ pub fn create_session(project_dir: &Path, launch: LaunchKind) -> Result<ManagedS
         name,
         project_dir: project_dir.to_path_buf(),
         is_current_project: true,
+        is_remote: launch.is_remote(),
         status: SessionStatus::Busy,
         last_activity: Some(SystemTime::now()),
         has_bell: false,
@@ -152,7 +154,7 @@ pub fn list_sessions(current_dir: &Path, cache: &mut StatusCache) -> Result<Vec<
         .args([
             "list-sessions",
             "-F",
-            "#{session_name}\t#{@gh-pilot-project}\t#{@gh-pilot-created}\t#{@gh-pilot-last-seen}",
+            "#{session_name}\t#{@gh-pilot-project}\t#{@gh-pilot-created}\t#{@gh-pilot-last-seen}\t#{@gh-pilot-command}",
         ])
         .output()
         .context("failed to list tmux sessions")?;
@@ -169,7 +171,7 @@ pub fn list_sessions(current_dir: &Path, cache: &mut StatusCache) -> Result<Vec<
     let now = SystemTime::now();
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let mut fields = line.splitn(4, '\t');
+        let mut fields = line.splitn(5, '\t');
         let Some(name) = fields.next() else {
             continue;
         };
@@ -181,6 +183,7 @@ pub fn list_sessions(current_dir: &Path, cache: &mut StatusCache) -> Result<Vec<
         let metadata_project = (!project_field.is_empty()).then(|| PathBuf::from(project_field));
         let _created_at = fields.next();
         let last_seen = fields.next().and_then(parse_tmux_time);
+        let command = fields.next().unwrap_or_default();
 
         let window_info = window_info(name).unwrap_or_default();
         let project_dir = metadata_project
@@ -205,17 +208,21 @@ pub fn list_sessions(current_dir: &Path, cache: &mut StatusCache) -> Result<Vec<
             _ => false,
         };
 
-        let detected_status = if window_info.pane_dead {
-            SessionStatus::Idle
-        } else {
-            status::detect_status(&content, content_changed, activity_recent, seen)
-        };
+        let detected_status = detect_session_status(
+            &content,
+            content_changed,
+            activity_recent,
+            seen,
+            window_info.pane_dead,
+            window_info.has_bell,
+        );
 
         sessions.push(ManagedSession {
             name: name.to_owned(),
             display_name: session_display_name(name, window_info.title.as_deref()),
             project_dir: project_dir.clone(),
             is_current_project: same_directory(&project_dir, current_dir),
+            is_remote: command_is_remote(command),
             status: detected_status,
             last_activity: window_info.last_activity,
             has_bell: window_info.has_bell,
@@ -323,6 +330,25 @@ fn window_info(name: &str) -> Result<WindowInfo> {
         current_path,
         title,
     })
+}
+
+fn detect_session_status(
+    content: &str,
+    content_changed: bool,
+    activity_recent: bool,
+    seen: bool,
+    pane_dead: bool,
+    has_bell: bool,
+) -> SessionStatus {
+    if pane_dead {
+        return SessionStatus::Idle;
+    }
+
+    if has_bell && !seen {
+        return SessionStatus::Done;
+    }
+
+    status::detect_status(content, content_changed, activity_recent, seen)
 }
 
 fn parse_tmux_time(field: &str) -> Option<SystemTime> {
@@ -449,6 +475,13 @@ fn unix_now() -> u64 {
 }
 
 impl LaunchKind {
+    fn is_remote(&self) -> bool {
+        match self {
+            Self::Local { remote_enabled } => *remote_enabled,
+            Self::Connect { .. } => true,
+        }
+    }
+
     fn command(&self) -> Result<String> {
         match self {
             Self::Local { remote_enabled } => {
@@ -468,6 +501,13 @@ impl LaunchKind {
             }
         }
     }
+}
+
+fn command_is_remote(command: &str) -> bool {
+    command.strip_prefix("exec copilot").is_some_and(|args| {
+        args.split_whitespace()
+            .any(|arg| arg == "--remote" || arg.starts_with("--resume="))
+    })
 }
 
 fn validate_session_id(id: &str) -> Result<()> {
@@ -512,6 +552,30 @@ mod tests {
         assert_eq!(
             command,
             "exec copilot --resume=85320a43-6021-40ac-bb41-d8f1ab2b9372"
+        );
+    }
+
+    #[test]
+    fn detects_remote_session_commands() {
+        assert!(command_is_remote("exec copilot --remote"));
+        assert!(command_is_remote("exec copilot --resume=abc-123"));
+        assert!(command_is_remote("exec copilot --remote --resume=abc-123"));
+        assert!(!command_is_remote("exec copilot"));
+    }
+
+    #[test]
+    fn unseen_bell_marks_session_done() {
+        assert_eq!(
+            detect_session_status("summary output", false, false, false, false, true),
+            SessionStatus::Done
+        );
+    }
+
+    #[test]
+    fn seen_bell_uses_detected_status() {
+        assert_eq!(
+            detect_session_status("summary output", false, false, true, false, true),
+            SessionStatus::Idle
         );
     }
 }
